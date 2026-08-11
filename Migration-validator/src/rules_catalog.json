@@ -1,0 +1,233 @@
+{
+  "_comment": "Migration Validator — PostgreSQL→Snowflake Transformation Rules Catalog v3.0. Single source of truth for ALL normalization rules. Aligned to the project specification: Boolean→'1'/'0', Numeric rounded to 2dp, Timestamps formatted YYYY-MM-DD HH24:MI:SS (microseconds stripped), UUID uppercased, Text trimmed, NULL→'<<NULL>>', Snowflake side adds WHERE _FIVETRAN_ACTIVE=TRUE.",
+  "version": "3.0",
+  "rules": [
+    {
+      "id": "boolean",
+      "enum_value": "boolean",
+      "display_name": "Boolean → '1'/'0'",
+      "description": "PostgreSQL BOOLEAN (true/false) and Snowflake BOOLEAN (TRUE/FALSE) are both normalised to text '1' (true) or '0' (false). NULL → '<<NULL>>' via COALESCE wrapper. This avoids case differences (true vs TRUE) and ensures direct text comparison.",
+      "pg_type_pairs": [
+        {"source": "boolean", "target": "BOOLEAN"},
+        {"source": "bool",    "target": "BOOLEAN"},
+        {"source": "boolean", "target": "BOOL"},
+        {"source": "bool",    "target": "BOOL"}
+      ],
+      "pg_expression": "CASE WHEN {col} = true THEN '1' WHEN {col} = false THEN '0' ELSE NULL END",
+      "sf_expression": "CASE WHEN {col} = TRUE THEN '1' WHEN {col} = FALSE THEN '0' ELSE NULL END",
+      "null_handling": "COALESCE(CAST({expr} AS TEXT/STRING), '<<NULL>>')",
+      "notes": "Project spec: 'Converts TRUE/FALSE to text 1 or 0. If NULL shows <<NULL>>.' Using '1'/'0' (not 'TRUE'/'FALSE') eliminates all case differences."
+    },
+    {
+      "id": "numeric",
+      "enum_value": "numeric",
+      "display_name": "Numeric / Decimal → rounded to 2dp text",
+      "description": "Rounds numeric/decimal values to 2 decimal places (agreed precision) then converts to text. Prevents false mismatches caused by floating-point precision differences introduced by Fivetran or ETL tools. NULL → '<<NULL>>'.",
+      "pg_type_pairs": [
+        {"source": "numeric",           "target": "NUMBER"},
+        {"source": "numeric",           "target": "NUMERIC"},
+        {"source": "decimal",           "target": "NUMBER"},
+        {"source": "decimal",           "target": "DECIMAL"},
+        {"source": "float",             "target": "FLOAT"},
+        {"source": "real",              "target": "FLOAT"},
+        {"source": "double precision",  "target": "FLOAT"},
+        {"source": "double precision",  "target": "NUMBER"},
+        {"source": "money",             "target": "NUMBER"}
+      ],
+      "pg_expression": "ROUND(CAST({col} AS NUMERIC), 2)",
+      "sf_expression": "ROUND(CAST({col} AS NUMBER(38, 2)), 2)",
+      "null_handling": "COALESCE(CAST({expr} AS TEXT/STRING), '<<NULL>>')",
+      "notes": "Project spec: 'Rounds values to 2 decimal places (or the agreed precision), then converts to text.' Default precision is 2dp — override per column if required."
+    },
+    {
+      "id": "timestamp_ntz",
+      "enum_value": "timestamp_ntz",
+      "display_name": "Timestamp NTZ → 'YYYY-MM-DD HH24:MI:SS'",
+      "description": "Formats TIMESTAMP WITHOUT TIME ZONE as 'YYYY-MM-DD HH24:MI:SS'. Strips fractional seconds (microseconds) so precision differences between PostgreSQL (6 decimal places) and Snowflake TIMESTAMP_NTZ do not create false mismatches. NULL → '<<NULL>>'.",
+      "pg_type_pairs": [
+        {"source": "timestamp without time zone", "target": "TIMESTAMP_NTZ"},
+        {"source": "timestamp",                   "target": "TIMESTAMP_NTZ"},
+        {"source": "timestamp",                   "target": "TIMESTAMP"},
+        {"source": "timestamp_ntz",               "target": "TIMESTAMP_NTZ"}
+      ],
+      "pg_expression": "TO_CHAR({col}, 'YYYY-MM-DD HH24:MI:SS')",
+      "sf_expression": "TO_VARCHAR({col}, 'YYYY-MM-DD HH24:MI:SS')",
+      "null_handling": "COALESCE(CAST({expr} AS TEXT/STRING), '<<NULL>>')",
+      "notes": "Project spec: 'Formats as YYYY-MM-DD HH24:MI:SS, removing fractional seconds so microsecond differences do not create false mismatches.'"
+    },
+    {
+      "id": "timestamp_tz",
+      "enum_value": "timestamp_tz",
+      "display_name": "Timestamp TZ → UTC → 'YYYY-MM-DD HH24:MI:SS'",
+      "description": "Converts timezone-aware timestamps to UTC then formats as 'YYYY-MM-DD HH24:MI:SS'. Eliminates timezone offset differences that may have been introduced during ETL migration. Strips fractional seconds. NULL → '<<NULL>>'.",
+      "pg_type_pairs": [
+        {"source": "timestamp with time zone", "target": "TIMESTAMP_TZ"},
+        {"source": "timestamptz",              "target": "TIMESTAMP_TZ"},
+        {"source": "timestamp_tz",             "target": "TIMESTAMP_TZ"}
+      ],
+      "pg_expression": "TO_CHAR({col} AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')",
+      "sf_expression": "TO_VARCHAR(CONVERT_TIMEZONE('UTC', {col}), 'YYYY-MM-DD HH24:MI:SS')",
+      "null_handling": "COALESCE(CAST({expr} AS TEXT/STRING), '<<NULL>>')",
+      "notes": "Project spec: 'Converts to a common timestamp format (or UTC if required), then formats as YYYY-MM-DD HH24:MI:SS.'"
+    },
+    {
+      "id": "date",
+      "enum_value": "date",
+      "display_name": "Date → 'YYYY-MM-DD'",
+      "description": "Formats DATE columns as 'YYYY-MM-DD' text for uniform comparison. DATE is consistent between PostgreSQL and Snowflake but must be converted to text for equality comparison. NULL → '<<NULL>>'.",
+      "pg_type_pairs": [
+        {"source": "date", "target": "DATE"}
+      ],
+      "pg_expression": "TO_CHAR({col}, 'YYYY-MM-DD')",
+      "sf_expression": "TO_VARCHAR({col}, 'YYYY-MM-DD')",
+      "null_handling": "COALESCE(CAST({expr} AS TEXT/STRING), '<<NULL>>')",
+      "notes": "Project spec: 'Formats as YYYY-MM-DD. If NULL shows <<NULL>>.'"
+    },
+    {
+      "id": "text",
+      "enum_value": "text",
+      "display_name": "Text / VARCHAR → TRIM",
+      "description": "Trims leading and trailing whitespace from text/varchar/char columns. Empty string '' remains as '' — NOT converted to NULL (kept semantically different from NULL). NULL → '<<NULL>>'. This is also the DEFAULT FALLBACK for unrecognised type pairs.",
+      "pg_type_pairs": [
+        {"source": "character varying", "target": "TEXT"},
+        {"source": "character varying", "target": "VARCHAR"},
+        {"source": "character varying", "target": "STRING"},
+        {"source": "varchar",           "target": "VARCHAR"},
+        {"source": "varchar",           "target": "STRING"},
+        {"source": "varchar",           "target": "TEXT"},
+        {"source": "char",              "target": "CHAR"},
+        {"source": "char",              "target": "VARCHAR"},
+        {"source": "text",              "target": "TEXT"},
+        {"source": "text",              "target": "VARCHAR"},
+        {"source": "text",              "target": "STRING"},
+        {"source": "*",                 "target": "*"}
+      ],
+      "pg_expression": "TRIM({col})",
+      "sf_expression": "TRIM({col})",
+      "null_handling": "COALESCE(CAST({expr} AS TEXT/STRING), '<<NULL>>')",
+      "notes": "Project spec: 'Trims leading and trailing spaces. Empty string remains blank (kept different from NULL). If NULL shows <<NULL>>.'"
+    },
+    {
+      "id": "uuid",
+      "enum_value": "uuid",
+      "display_name": "UUID → UPPER(TRIM())",
+      "description": "Converts UUID to UPPERCASE text and trims spaces. PostgreSQL stores UUID natively in lowercase (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx); Snowflake stores as VARCHAR which Fivetran may load in UPPERCASE. Uppercasing both eliminates case differences. NULL → '<<NULL>>'.",
+      "pg_type_pairs": [
+        {"source": "uuid", "target": "TEXT"},
+        {"source": "uuid", "target": "VARCHAR"},
+        {"source": "uuid", "target": "STRING"},
+        {"source": "uuid", "target": "UUID"}
+      ],
+      "pg_expression": "UPPER(TRIM(CAST({col} AS TEXT)))",
+      "sf_expression": "UPPER(TRIM(CAST({col} AS STRING)))",
+      "null_handling": "COALESCE(CAST({expr} AS TEXT/STRING), '<<NULL>>')",
+      "notes": "Project spec: 'Converts to uppercase text and trims spaces. Converted to uppercase and trimmed before comparison. If NULL shows <<NULL>>.'"
+    },
+    {
+      "id": "integer",
+      "enum_value": "integer",
+      "display_name": "Integer / Bigint / Smallint → text",
+      "description": "Casts integer-family columns to text for cross-system comparison. PostgreSQL INTEGER is 32-bit, BIGINT is 64-bit; Snowflake NUMBER is arbitrary precision. Converting both to text string representation eliminates type-width mismatches. NULL → '<<NULL>>'.",
+      "pg_type_pairs": [
+        {"source": "integer",   "target": "NUMBER"},
+        {"source": "integer",   "target": "INTEGER"},
+        {"source": "int",       "target": "NUMBER"},
+        {"source": "int",       "target": "INTEGER"},
+        {"source": "bigint",    "target": "NUMBER"},
+        {"source": "bigint",    "target": "INTEGER"},
+        {"source": "smallint",  "target": "NUMBER"},
+        {"source": "smallint",  "target": "INTEGER"},
+        {"source": "serial",    "target": "NUMBER"},
+        {"source": "serial",    "target": "INTEGER"},
+        {"source": "bigserial", "target": "NUMBER"},
+        {"source": "bigserial", "target": "INTEGER"}
+      ],
+      "pg_expression": "CAST({col} AS TEXT)",
+      "sf_expression": "CAST({col} AS STRING)",
+      "null_handling": "COALESCE(CAST({expr} AS TEXT/STRING), '<<NULL>>')",
+      "notes": "Project spec: 'Converts to text. Converted to text. If NULL shows <<NULL>>.'"
+    },
+    {
+      "id": "json",
+      "enum_value": "json",
+      "display_name": "JSON / JSONB → canonical text",
+      "description": "Converts JSON into a canonical text representation before comparison. PostgreSQL JSONB::text serialises with sorted keys and normalised whitespace. Snowflake TO_JSON(PARSE_JSON(...)) produces a canonical form. Eliminates key-ordering and formatting differences. NULL → '<<NULL>>'.",
+      "pg_type_pairs": [
+        {"source": "json",  "target": "VARIANT"},
+        {"source": "json",  "target": "VARCHAR"},
+        {"source": "json",  "target": "TEXT"},
+        {"source": "jsonb", "target": "VARIANT"},
+        {"source": "jsonb", "target": "VARCHAR"},
+        {"source": "jsonb", "target": "TEXT"}
+      ],
+      "pg_expression": "{col}::jsonb::text",
+      "sf_expression": "TO_JSON(PARSE_JSON(CAST({col} AS STRING)))",
+      "null_handling": "COALESCE(CAST({expr} AS TEXT/STRING), '<<NULL>>')",
+      "notes": "Project spec: 'Converts JSON into a canonical text representation before comparison.' JSONB in PostgreSQL automatically sorts keys alphabetically, enabling consistent comparison."
+    },
+    {
+      "id": "hstore",
+      "enum_value": "hstore",
+      "display_name": "HStore → CAST to TEXT then TRIM",
+      "description": "Casts PostgreSQL hstore (key-value store) to TEXT before trimming. Fivetran converts hstore to JSON-like text in Snowflake (VARCHAR/TEXT). The CAST to TEXT must occur BEFORE TRIM because PostgreSQL TRIM() does not accept hstore type directly. NULL → '<<NULL>>'.",
+      "pg_type_pairs": [
+        {"source": "hstore", "target": "TEXT"},
+        {"source": "hstore", "target": "VARCHAR"},
+        {"source": "hstore", "target": "STRING"},
+        {"source": "hstore", "target": "VARIANT"}
+      ],
+      "pg_expression": "TRIM(CAST({col} AS TEXT))",
+      "sf_expression": "TRIM({col})",
+      "null_handling": "COALESCE(CAST({expr} AS TEXT/STRING), '<<NULL>>')",
+      "notes": "PostgreSQL hstore type requires explicit CAST to TEXT before any string function (TRIM, LENGTH, etc.) can be applied. Fivetran migrates hstore as JSON-formatted text string."
+    },
+    {
+      "id": "bytea",
+      "enum_value": "bytea",
+      "display_name": "BYTEA / Binary → hex text",
+      "description": "Converts binary data into a hexadecimal text representation before comparison. PostgreSQL encode(col,'hex') produces lowercase hex; Snowflake LOWER(HEX_ENCODE(col)) normalised to lowercase for consistency. NULL → '<<NULL>>'.",
+      "pg_type_pairs": [
+        {"source": "bytea",     "target": "BINARY"},
+        {"source": "bytea",     "target": "VARBINARY"},
+        {"source": "bytea",     "target": "VARCHAR"},
+        {"source": "bytea",     "target": "STRING"},
+        {"source": "binary",    "target": "BINARY"},
+        {"source": "varbinary", "target": "BINARY"}
+      ],
+      "pg_expression": "encode({col}, 'hex')",
+      "sf_expression": "LOWER(HEX_ENCODE({col}))",
+      "null_handling": "COALESCE(CAST({expr} AS TEXT/STRING), '<<NULL>>')",
+      "notes": "Project spec: 'Converts binary data into a hexadecimal/text representation before comparison.' Both sides normalised to lowercase hex for consistent comparison."
+    }
+  ],
+  "null_rule": {
+    "id": "null_placeholder",
+    "description": "Universal NULL handling applied to ALL columns. SQL NULL ≠ NULL (NULL comparisons always return NULL/unknown). Converting NULL to '<<NULL>>' sentinel makes comparisons work correctly. Applied as the outermost COALESCE wrapper after all other transformations.",
+    "pg_expression":  "COALESCE(CAST({expr} AS TEXT), '<<NULL>>')",
+    "sf_expression":  "COALESCE(CAST({expr} AS STRING), '<<NULL>>')",
+    "sentinel":       "<<NULL>>",
+    "notes": "Project spec: '<<NULL>> placeholder → SQL treats NULL ≠ NULL; converting NULL to a comparable value avoids false mismatches.' Applied to EVERY column regardless of type."
+  },
+  "fivetran_filter": {
+    "description": "Snowflake-side filter added when _FIVETRAN_ACTIVE column is detected. Ensures only the LATEST active record is compared instead of historical Fivetran change-tracking snapshots.",
+    "clause": "WHERE _FIVETRAN_ACTIVE = TRUE",
+    "column": "_FIVETRAN_ACTIVE",
+    "notes": "Project spec: 'WHERE _FIVETRAN_ACTIVE = TRUE — ensures only the latest active record is compared instead of historical snapshots.' Auto-detected by SnowflakeExtractor.has_fivetran_active()."
+  },
+  "rule_application_order": {
+    "description": "Rules applied innermost to outermost — type-specific transformation first, NULL placeholder last.",
+    "order": [
+      "integer   (CAST to text — innermost for integer types)",
+      "uuid      (UPPER + TRIM — innermost for UUID)",
+      "json      (canonical JSON — innermost for JSON)",
+      "bytea     (hex encoding — innermost for binary)",
+      "boolean   (CASE WHEN → '1'/'0')",
+      "timestamp_tz (CONVERT_TIMEZONE UTC, then format)",
+      "timestamp_ntz (TO_CHAR/TO_VARCHAR format)",
+      "date      (TO_CHAR/TO_VARCHAR format)",
+      "numeric   (ROUND to 2dp)",
+      "text      (TRIM)",
+      "null_placeholder (COALESCE — always LAST / outermost)"
+    ]
+  }
+}

@@ -1,0 +1,178 @@
+{
+  "meta": {
+    "generatedAt": "2026-08-07T09:27:52.368Z",
+    "rangeLabel": "all",
+    "agents": [
+      "claude"
+    ],
+    "projectFilter": "all",
+    "totals": {
+      "sessions": 1,
+      "durationMs": 1000977,
+      "turns": 12,
+      "files": 12,
+      "netLines": 9,
+      "toolCallsTotal": 16,
+      "toolSuccessRate": 100,
+      "totalCostUSD": 2.0479811999999997,
+      "cacheReadCostUSD": 0.1702542,
+      "pricedSessions": 1
+    },
+    "unpricedModels": [],
+    "coverage": [
+      {
+        "agentName": "claude",
+        "total": 1,
+        "priced": 1,
+        "withLog": 1
+      }
+    ],
+    "periodStart": "2026-08-07T09:11:08.681Z",
+    "periodEnd": "2026-08-07T09:27:49.658Z"
+  },
+  "sessions": [
+    {
+      "sessionId": "b57514fd-33a8-4a3e-91a2-42d3468e4b9f",
+      "agentName": "claude",
+      "provider": "ai-run-sso",
+      "title": "──────────────────────────────────────────────────────────────── ③ MAIN VALIDATION — PostgreSQL ──────────────────────────────────────────────────────────────── ✗ Query failed: function pg_catalog.btrim(hstore) does not exist LINE 5: COALESCE(CAST(TRIM(data) AS TEXT), ' >') AS data_n... ^ HINT: No function matches the given name and argument types. You might need to add explicit type casts. ──────────────────────────────────────────────────────────────── ④ MAIN VALIDATION — Snowflake ──────────────────────────────────────────────────────────────── Im encountering some errors while executing can you please review and fix it to work flawlessly",
+      "project": "C:\\EPAM-Personal\\Migration-validator\\src",
+      "branch": "HEAD",
+      "startTime": 1786093868681,
+      "durationMs": 1000977,
+      "turns": 12,
+      "fileOps": 12,
+      "linesAdded": 11,
+      "linesRemoved": 2,
+      "linesModified": 0,
+      "netLines": 9,
+      "filesChanged": 1,
+      "filesWritten": 0,
+      "filesEdited": 1,
+      "toolCallsTotal": 16,
+      "toolCallsSuccess": 16,
+      "toolCallsFailure": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "languages": [
+        "python",
+        "markdown"
+      ],
+      "tools": [
+        {
+          "toolName": "Read",
+          "totalCalls": 13,
+          "successCount": 13,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Edit",
+          "totalCalls": 2,
+          "successCount": 2,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Glob",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        }
+      ],
+      "tokens": {
+        "input": 4344,
+        "output": 9793,
+        "cacheRead": 567514,
+        "cacheCreation": 286300,
+        "cacheCreation1h": 286300,
+        "total": 867951
+      },
+      "costUSD": 2.0479811999999997,
+      "cacheReadCostUSD": 0.1702542,
+      "perModelCost": [
+        {
+          "model": "claude-sonnet-4-6",
+          "tokens": {
+            "input": 4344,
+            "output": 9793,
+            "cacheRead": 567514,
+            "cacheCreation": 286300,
+            "cacheCreation1h": 286300,
+            "total": 867951
+          },
+          "costUSD": 2.0479811999999997,
+          "unpriced": false
+        }
+      ],
+      "costSeries": [
+        {
+          "t": 1786093916509,
+          "cost": 0.26661,
+          "tokens": 44129
+        },
+        {
+          "t": 1786094326120,
+          "cost": 0.539919,
+          "tokens": 89489
+        },
+        {
+          "t": 1786094333277,
+          "cost": 0.6121347,
+          "tokens": 139778
+        },
+        {
+          "t": 1786094348489,
+          "cost": 0.7914024,
+          "tokens": 207258
+        },
+        {
+          "t": 1786094370547,
+          "cost": 1.0072281,
+          "tokens": 279805
+        },
+        {
+          "t": 1786094385939,
+          "cost": 1.1850906,
+          "tokens": 358439
+        },
+        {
+          "t": 1786094416208,
+          "cost": 1.2852741,
+          "tokens": 440039
+        },
+        {
+          "t": 1786094436546,
+          "cost": 1.5630018,
+          "tokens": 523200
+        },
+        {
+          "t": 1786094482296,
+          "cost": 1.6880328,
+          "tokens": 610059
+        },
+        {
+          "t": 1786094503300,
+          "cost": 1.9745415,
+          "tokens": 695507
+        },
+        {
+          "t": 1786094513365,
+          "cost": 2.0130837,
+          "tokens": 781367
+        },
+        {
+          "t": 1786094523265,
+          "cost": 2.0479812,
+          "tokens": 867951
+        }
+      ],
+      "skillInvocations": [],
+      "agentInvocations": [],
+      "commandInvocations": [],
+      "sessionSource": "Pure chat"
+    }
+  ]
+}

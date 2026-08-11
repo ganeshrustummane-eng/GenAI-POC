@@ -1,0 +1,241 @@
+{
+  "meta": {
+    "generatedAt": "2026-08-06T10:24:08.799Z",
+    "rangeLabel": "all",
+    "agents": [
+      "claude"
+    ],
+    "projectFilter": "all",
+    "totals": {
+      "sessions": 1,
+      "durationMs": 337706,
+      "turns": 14,
+      "files": 27,
+      "netLines": 403,
+      "toolCallsTotal": 31,
+      "toolSuccessRate": 100,
+      "totalCostUSD": 3.5140308,
+      "cacheReadCostUSD": 0.16614479999999998,
+      "pricedSessions": 1
+    },
+    "unpricedModels": [],
+    "coverage": [
+      {
+        "agentName": "claude",
+        "total": 1,
+        "priced": 1,
+        "withLog": 1
+      }
+    ],
+    "periodStart": "2026-08-06T10:14:37.394Z"
+  },
+  "sessions": [
+    {
+      "sessionId": "6109b149-ba59-4685-9fce-175bd15d906a",
+      "agentName": "claude",
+      "provider": "ai-run-sso",
+      "title": "Explore the project at C:\\EPAM-Personal\\Migration-validator\\src and its parent directory C:\\EPAM-Personal\\Migration-validator. I need a thorough understanding of: 1. All files and their purposes (list directory structure) 2. Read the main entry point files and understand what they do 3. Read any configuration files 4. Read any connector/database files 5. Understand the overall execution flow from start to finish Please read the actual content of all significant Python files, config files, and any README that exists. Be very thorough - read each file completely so I can write accurate documentation.",
+      "project": "C:\\EPAM-Personal\\Migration-validator\\src",
+      "branch": "HEAD",
+      "startTime": 1786011277394,
+      "durationMs": 337706,
+      "turns": 14,
+      "fileOps": 27,
+      "linesAdded": 403,
+      "linesRemoved": 0,
+      "linesModified": 0,
+      "netLines": 403,
+      "filesChanged": 1,
+      "filesWritten": 1,
+      "filesEdited": 0,
+      "toolCallsTotal": 31,
+      "toolCallsSuccess": 31,
+      "toolCallsFailure": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "languages": [
+        "markdown",
+        "python",
+        "yaml",
+        "json"
+      ],
+      "tools": [
+        {
+          "toolName": "Read",
+          "totalCalls": 24,
+          "successCount": 24,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Glob",
+          "totalCalls": 4,
+          "successCount": 4,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Bash",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Agent",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Write",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        }
+      ],
+      "tokens": {
+        "input": 17556,
+        "output": 12166,
+        "cacheRead": 553816,
+        "cacheCreation": 518788,
+        "cacheCreation1h": 518788,
+        "total": 1102326
+      },
+      "costUSD": 3.5140308,
+      "cacheReadCostUSD": 0.16614479999999998,
+      "perModelCost": [
+        {
+          "model": "claude-sonnet-4-6",
+          "tokens": {
+            "input": 17556,
+            "output": 12166,
+            "cacheRead": 553816,
+            "cacheCreation": 518788,
+            "cacheCreation1h": 518788,
+            "total": 1102326
+          },
+          "costUSD": 3.5140308,
+          "unpriced": false
+        }
+      ],
+      "costSeries": [
+        {
+          "t": 1786011326211,
+          "cost": 0.0723204,
+          "tokens": 44083
+        },
+        {
+          "t": 1786011329584,
+          "cost": 0.2235384,
+          "tokens": 68968
+        },
+        {
+          "t": 1786011349811,
+          "cost": 0.2497161,
+          "tokens": 97950
+        },
+        {
+          "t": 1786011360511,
+          "cost": 0.4539831,
+          "tokens": 131518
+        },
+        {
+          "t": 1786011374903,
+          "cost": 0.5826408,
+          "tokens": 184275
+        },
+        {
+          "t": 1786011379994,
+          "cost": 0.747501,
+          "tokens": 261429
+        },
+        {
+          "t": 1786011384419,
+          "cost": 1.1563125,
+          "tokens": 350258
+        },
+        {
+          "t": 1786011391169,
+          "cost": 1.2839292,
+          "tokens": 457794
+        },
+        {
+          "t": 1786011399989,
+          "cost": 1.9656342,
+          "tokens": 575942
+        },
+        {
+          "t": 1786011407270,
+          "cost": 2.1532419,
+          "tokens": 709848
+        },
+        {
+          "t": 1786011412950,
+          "cost": 2.8499274,
+          "tokens": 846818
+        },
+        {
+          "t": 1786011512659,
+          "cost": 3.0237624,
+          "tokens": 994878
+        },
+        {
+          "t": 1786011588191,
+          "cost": 3.3846054,
+          "tokens": 1048518
+        },
+        {
+          "t": 1786011615100,
+          "cost": 3.5140308,
+          "tokens": 1102326
+        }
+      ],
+      "dispatches": [
+        {
+          "kind": "agent",
+          "name": "Explore",
+          "start": 1786011326211,
+          "durationMs": 188024,
+          "costUSD": 2.951442,
+          "tokens": {
+            "input": 17551,
+            "output": 7307,
+            "cacheRead": 485340,
+            "cacheCreation": 440597,
+            "cacheCreation1h": 440597,
+            "total": 950795
+          },
+          "tools": [
+            {
+              "name": "Read",
+              "calls": 24
+            },
+            {
+              "name": "Glob",
+              "calls": 4
+            },
+            {
+              "name": "Bash",
+              "calls": 1
+            }
+          ]
+        }
+      ],
+      "skillInvocations": [],
+      "agentInvocations": [
+        {
+          "name": "Explore",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0
+        }
+      ],
+      "commandInvocations": [],
+      "sessionSource": "Pure chat"
+    }
+  ]
+}

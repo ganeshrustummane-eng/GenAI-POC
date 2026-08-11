@@ -1,0 +1,147 @@
+{
+  "meta": {
+    "generatedAt": "2026-08-07T10:43:46.472Z",
+    "rangeLabel": "all",
+    "agents": [
+      "claude"
+    ],
+    "projectFilter": "all",
+    "totals": {
+      "sessions": 1,
+      "durationMs": 3222911,
+      "turns": 6,
+      "files": 6,
+      "netLines": 5,
+      "toolCallsTotal": 7,
+      "toolSuccessRate": 100,
+      "totalCostUSD": 0.6268461,
+      "cacheReadCostUSD": 0.08894609999999999,
+      "pricedSessions": 1
+    },
+    "unpricedModels": [],
+    "coverage": [
+      {
+        "agentName": "claude",
+        "total": 1,
+        "priced": 1,
+        "withLog": 1
+      }
+    ],
+    "periodStart": "2026-08-07T09:31:32.787Z"
+  },
+  "sessions": [
+    {
+      "sessionId": "5d05a853-2300-436d-9215-fea5e1c99bb5",
+      "agentName": "claude",
+      "provider": "ai-run-sso",
+      "title": "════════════════════════════════════════════════════════════════ ROW COUNT COMPARISON ──────────────────────────────────────────────────────────────── PostgreSQL rows : 1,000 Snowflake rows : 0 ✗ Row count MISMATCH | diff = 1,000 rows (100.0%) ════════════════════════════════════════════════════════════════ (.venv) PS C:\\EPAM-Personal\\Migration-validator\\src>",
+      "project": "C:\\EPAM-Personal\\Migration-validator\\src",
+      "branch": "HEAD",
+      "startTime": 1786095092787,
+      "durationMs": 3222911,
+      "turns": 6,
+      "fileOps": 6,
+      "linesAdded": 7,
+      "linesRemoved": 2,
+      "linesModified": 0,
+      "netLines": 5,
+      "filesChanged": 1,
+      "filesWritten": 0,
+      "filesEdited": 1,
+      "toolCallsTotal": 7,
+      "toolCallsSuccess": 7,
+      "toolCallsFailure": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "languages": [
+        "python",
+        "markdown"
+      ],
+      "tools": [
+        {
+          "toolName": "Read",
+          "totalCalls": 5,
+          "successCount": 5,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Glob",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Edit",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        }
+      ],
+      "tokens": {
+        "input": 8,
+        "output": 2390,
+        "cacheRead": 296487,
+        "cacheCreation": 83671,
+        "cacheCreation1h": 83671,
+        "total": 382556
+      },
+      "costUSD": 0.6268461,
+      "cacheReadCostUSD": 0.08894609999999999,
+      "perModelCost": [
+        {
+          "model": "claude-sonnet-4-6",
+          "tokens": {
+            "input": 8,
+            "output": 2390,
+            "cacheRead": 296487,
+            "cacheCreation": 83671,
+            "cacheCreation1h": 83671,
+            "total": 382556
+          },
+          "costUSD": 0.6268461,
+          "unpriced": false
+        }
+      ],
+      "costSeries": [
+        {
+          "t": 1786095103251,
+          "cost": 0.0360057,
+          "tokens": 44117
+        },
+        {
+          "t": 1786095302457,
+          "cost": 0.0606144,
+          "tokens": 89772
+        },
+        {
+          "t": 1786095314065,
+          "cost": 0.1325751,
+          "tokens": 139897
+        },
+        {
+          "t": 1786095325688,
+          "cost": 0.3368286,
+          "tokens": 216500
+        },
+        {
+          "t": 1786095346420,
+          "cost": 0.5627766,
+          "tokens": 299759
+        },
+        {
+          "t": 1786098315698,
+          "cost": 0.6268461,
+          "tokens": 382556
+        }
+      ],
+      "skillInvocations": [],
+      "agentInvocations": [],
+      "commandInvocations": [],
+      "sessionSource": "Pure chat"
+    }
+  ]
+}

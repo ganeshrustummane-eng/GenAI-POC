@@ -1,0 +1,499 @@
+"""
+SQL Query Generator
+====================
+Builds validation SQL queries for a PostgreSQL → Snowflake table pair.
+
+Applies the FULL normalization rules per specification:
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │ Type          │ PG Expression                │ SF Expression        │
+  ├─────────────────────────────────────────────────────────────────────┤
+  │ BOOLEAN       │ CASE WHEN…THEN '1'/'0'        │ CASE WHEN…THEN '1'  │
+  │ NUMERIC       │ ROUND(CAST(…AS NUMERIC),2)    │ ROUND(CAST(…),2)    │
+  │ TIMESTAMP_NTZ │ TO_CHAR(…,'YYYY-MM-DD HH24:  │ TO_VARCHAR(…,fmt)   │
+  │               │          MI:SS')              │                     │
+  │ TIMESTAMP_TZ  │ TO_CHAR(…AT TZ 'UTC',…)       │ TO_VARCHAR(CONVERT_ │
+  │               │                               │ TIMEZONE('UTC',…),…)│
+  │ DATE          │ TO_CHAR(…,'YYYY-MM-DD')        │ TO_VARCHAR(…,'…')   │
+  │ TEXT/VARCHAR  │ TRIM(…)                       │ TRIM(…)             │
+  │ UUID          │ UPPER(TRIM(CAST(…AS TEXT)))   │ UPPER(TRIM(…))      │
+  │ INTEGER       │ CAST(…AS TEXT)                │ CAST(…AS STRING)    │
+  │ JSON/JSONB    │ …::jsonb::text                │ TO_JSON(PARSE_JSON) │
+  │ BYTEA         │ encode(…,'hex')               │ LOWER(HEX_ENCODE(…))│
+  │ ALL (NULL)    │ COALESCE(…,'<<NULL>>')         │ COALESCE(…,'<<NULL>>│
+  └─────────────────────────────────────────────────────────────────────┘
+
+Snowflake-specific:
+  WHERE _FIVETRAN_ACTIVE = TRUE  ← only latest active records compared
+
+Generated queries (no PK dependency — PKs deferred to future milestone):
+  ① Row count      (source — PostgreSQL)
+  ② Row count      (target — Snowflake)
+  ③ Main validation (source — normalised SELECT for all columns)
+  ④ Main validation (target — normalised SELECT for all columns)
+  ⑤ NULL % per column (source)
+  ⑥ NULL % per column (target)
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import TYPE_CHECKING, List, Optional
+
+from ai_transformation.static_rule_mapper import ColumnRuleMapping
+from rules import get_rule_for_type
+
+if TYPE_CHECKING:
+    from core.validation_plan import CanonicalValidationPlan, ColumnMappingEntry
+
+
+# ---------------------------------------------------------------------------
+# Output container
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ValidationQuerySet:
+    """
+    All SQL queries generated for one source → target table pair.
+
+    Attributes:
+        table_name             : Source table name
+        source_db_label        : e.g. 'postgresql://public.events'
+        target_db_label        : e.g. 'snowflake://dev_edge_bronze.schema.EVENTS'
+        generated_by           : 'AI' or 'static'
+        generated_at           : ISO timestamp
+        model_used             : AI model name used for generation (e.g. 'gpt-4o')
+
+        row_count_source       : ① SELECT COUNT(*) on PostgreSQL
+        row_count_target       : ② SELECT COUNT(*) on Snowflake
+        main_validation_source : ③ Normalised SELECT on PostgreSQL
+        main_validation_target : ④ Normalised SELECT on Snowflake
+        null_pct_source        : ⑤ NULL % per column — PostgreSQL
+        null_pct_target        : ⑥ NULL % per column — Snowflake
+        distinct_count_source  : ⑦ DISTINCT count per column — PostgreSQL
+        distinct_count_target  : ⑧ DISTINCT count per column — Snowflake
+        combined_sql           : All queries combined into one file
+    """
+    table_name: str
+    source_db_label: str
+    target_db_label: str
+    generated_by: str = "static"
+    generated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    model_used: str = "N/A"
+
+    row_count_source: str = ""
+    row_count_target: str = ""
+    main_validation_source: str = ""
+    main_validation_target: str = ""
+    null_pct_source: str = ""
+    null_pct_target: str = ""
+    distinct_count_source: str = ""
+    distinct_count_target: str = ""
+    combined_sql: str = ""
+
+
+# ---------------------------------------------------------------------------
+# SQL Query Generator
+# ---------------------------------------------------------------------------
+
+class SQLQueryGenerator:
+    """
+    Builds all validation SQL from a ColumnRuleMapping list.
+
+    PK-Free Design
+    --------------
+    Primary key handling is deferred to a future milestone.
+    Queries do NOT include ORDER BY pk, duplicate PK checks, or missing
+    row checks. All columns are treated equally.
+
+    NULL Handling
+    -------------
+    COALESCE(CAST(expr AS TEXT/STRING), '<<NULL>>') is applied to EVERY
+    column via the rule's apply_postgresql() / apply_snowflake() methods.
+
+    Fivetran Filter
+    ---------------
+    When has_fivetran_active=True the Snowflake queries include:
+        WHERE _FIVETRAN_ACTIVE = TRUE
+    This ensures only the LATEST active record is compared.
+    """
+
+    NULL_PLACEHOLDER = "<<NULL>>"
+
+    def generate(
+        self,
+        pg_schema: str,
+        pg_table: str,
+        sf_database: str,
+        sf_schema: str,
+        sf_table: str,
+        mappings: List[ColumnRuleMapping],
+        has_fivetran_active: bool = False,
+        generated_by: str = "static",
+        model_used: str = "N/A",
+    ) -> ValidationQuerySet:
+        """
+        Generate all validation queries for the given table pair.
+
+        Args:
+            pg_schema          : PostgreSQL schema (e.g. 'public')
+            pg_table           : PostgreSQL table name
+            sf_database        : Snowflake database name
+            sf_schema          : Snowflake schema name
+            sf_table           : Snowflake table name
+            mappings           : Column rule mappings (active only — skip_validation=False)
+            has_fivetran_active: If True, adds WHERE _FIVETRAN_ACTIVE = TRUE on SF side
+            generated_by       : 'AI' or 'static'
+            model_used         : AI model name (e.g. 'gpt-4o', 'N/A' for static)
+
+        Returns:
+            ValidationQuerySet with all queries populated.
+        """
+        # Only include columns that should be validated
+        active = [m for m in mappings if not m.skip_validation]
+
+        sf_full = (
+            f"{sf_database}.{sf_schema}.{sf_table}"
+            if sf_database
+            else f"{sf_schema}.{sf_table}"
+        )
+
+        qs = ValidationQuerySet(
+            table_name=pg_table,
+            source_db_label=f"postgresql://{pg_schema}.{pg_table}",
+            target_db_label=f"snowflake://{sf_full}",
+            generated_by=generated_by,
+            model_used=model_used,
+        )
+
+        qs.row_count_source       = self._row_count_pg(pg_schema, pg_table)
+        qs.row_count_target       = self._row_count_sf(sf_full, has_fivetran_active)
+        qs.main_validation_source = self._main_validation_pg(pg_schema, pg_table, active)
+        qs.main_validation_target = self._main_validation_sf(sf_full, active, has_fivetran_active)
+        qs.null_pct_source        = self._null_pct_pg(pg_schema, pg_table, active)
+        qs.null_pct_target        = self._null_pct_sf(sf_full, active, has_fivetran_active)
+        qs.distinct_count_source  = self._distinct_count_pg(pg_schema, pg_table, active)
+        qs.distinct_count_target  = self._distinct_count_sf(sf_full, active, has_fivetran_active)
+        qs.combined_sql           = self._combined(qs)
+
+        return qs
+
+    def generate_from_plan(self, plan: "CanonicalValidationPlan") -> ValidationQuerySet:
+        """
+        Generate all validation queries from a CanonicalValidationPlan.
+
+        This is the new plan-driven entry point. The plan is the single source
+        of truth — no other input is needed.
+
+        Args:
+            plan: Fully constructed and validated CanonicalValidationPlan
+
+        Returns:
+            ValidationQuerySet with all 8 queries populated.
+        """
+        mappings = _plan_to_rule_mappings(plan.active_mappings)
+        return self.generate(
+            pg_schema=plan.source_schema,
+            pg_table=plan.source_table,
+            sf_database=plan.target_database,
+            sf_schema=plan.target_schema,
+            sf_table=plan.target_table,
+            mappings=mappings,
+            has_fivetran_active=plan.has_fivetran_active,
+            generated_by=plan.generated_by,
+            model_used=plan.model_used,
+        )
+
+    # -----------------------------------------------------------------------
+    # ① Row Count — PostgreSQL
+    # -----------------------------------------------------------------------
+
+    def _row_count_pg(self, schema: str, table: str) -> str:
+        return (
+            f"-- ① ROW COUNT: PostgreSQL ({schema}.{table})\n"
+            f"SELECT COUNT(*) AS source_row_count\n"
+            f"FROM {schema}.{table};"
+        )
+
+    # -----------------------------------------------------------------------
+    # ② Row Count — Snowflake
+    # -----------------------------------------------------------------------
+
+    def _row_count_sf(self, sf_full: str, fivetran_active: bool) -> str:
+        where = "\nWHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else ""
+        return (
+            f"-- ② ROW COUNT: Snowflake ({sf_full})\n"
+            f"SELECT COUNT(*) AS target_row_count\n"
+            f"FROM {sf_full}{where};"
+        )
+
+    # -----------------------------------------------------------------------
+    # ③ Main Validation — PostgreSQL (normalised SELECT, no PK ORDER BY)
+    # -----------------------------------------------------------------------
+
+    def _main_validation_pg(
+        self,
+        schema: str,
+        table: str,
+        mappings: List[ColumnRuleMapping],
+    ) -> str:
+        if not mappings:
+            return (
+                f"-- ③ SOURCE: PostgreSQL ({schema}.{table})\n"
+                f"-- No comparable columns found.\n"
+                f"SELECT 1;"
+            )
+
+        select_lines = []
+        for m in mappings:
+            expr = m.rule.apply_postgresql(
+                m.source_column,
+                alias=f"{m.source_column}_normalized",
+            )
+            select_lines.append(f"    {expr}")
+
+        cols = ",\n".join(select_lines)
+
+        return (
+            f"-- ③ SOURCE: PostgreSQL ({schema}.{table})\n"
+            f"SELECT\n{cols}\n"
+            f"FROM {schema}.{table};"
+        )
+
+    # -----------------------------------------------------------------------
+    # ④ Main Validation — Snowflake (normalised SELECT, no PK ORDER BY)
+    # -----------------------------------------------------------------------
+
+    def _main_validation_sf(
+        self,
+        sf_full: str,
+        mappings: List[ColumnRuleMapping],
+        fivetran_active: bool,
+    ) -> str:
+        if not mappings:
+            return (
+                f"-- ④ TARGET: Snowflake ({sf_full})\n"
+                f"-- No comparable columns found.\n"
+                f"SELECT 1;"
+            )
+
+        select_lines = []
+        for m in mappings:
+            # Alias uses source_column name so both sides share the same column names
+            expr = m.rule.apply_snowflake(
+                m.target_column,
+                alias=f"{m.source_column}_normalized",
+            )
+            select_lines.append(f"    {expr}")
+
+        where = "\nWHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else ""
+        cols  = ",\n".join(select_lines)
+
+        return (
+            f"-- ④ TARGET: Snowflake ({sf_full})\n"
+            f"SELECT\n{cols}\n"
+            f"FROM {sf_full}{where};"
+        )
+
+    # -----------------------------------------------------------------------
+    # ⑤ NULL % Per Column — PostgreSQL
+    # -----------------------------------------------------------------------
+
+    def _null_pct_pg(
+        self,
+        schema: str,
+        table: str,
+        mappings: List[ColumnRuleMapping],
+    ) -> str:
+        if not mappings:
+            return ""
+
+        null_parts = ",\n    ".join(
+            f"ROUND(100.0 * SUM(CASE WHEN {m.source_column} IS NULL THEN 1 ELSE 0 END)"
+            f" / COUNT(*), 2) AS {m.source_column}_null_pct"
+            for m in mappings
+        )
+        return (
+            f"-- ⑤ NULL % CHECK: PostgreSQL ({schema}.{table})\n"
+            f"SELECT\n    COUNT(*) AS total_rows,\n    {null_parts}\n"
+            f"FROM {schema}.{table};"
+        )
+
+    # -----------------------------------------------------------------------
+    # ⑥ NULL % Per Column — Snowflake
+    # -----------------------------------------------------------------------
+
+    def _null_pct_sf(
+        self,
+        sf_full: str,
+        mappings: List[ColumnRuleMapping],
+        fivetran_active: bool,
+    ) -> str:
+        if not mappings:
+            return ""
+
+        null_parts = ",\n    ".join(
+            f"ROUND(100.0 * SUM(CASE WHEN {m.target_column} IS NULL THEN 1 ELSE 0 END)"
+            f" / COUNT(*), 2) AS {m.source_column}_null_pct"
+            for m in mappings
+        )
+        where = "\nWHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else ""
+        return (
+            f"-- ⑥ NULL % CHECK: Snowflake ({sf_full})\n"
+            f"SELECT\n    COUNT(*) AS total_rows,\n    {null_parts}\n"
+            f"FROM {sf_full}{where};"
+        )
+
+    # -----------------------------------------------------------------------
+    # ⑦ Distinct value count per column — PostgreSQL
+    # -----------------------------------------------------------------------
+
+    def _distinct_count_pg(
+        self,
+        schema: str,
+        table: str,
+        mappings: List[ColumnRuleMapping],
+    ) -> str:
+        if not mappings:
+            return ""
+
+        # json has no equality operator; cast to jsonb first so DISTINCT works.
+        _JSON_TYPES = {"json"}
+
+        def _pg_distinct_expr(m) -> str:
+            col = m.source_column
+            if getattr(m, "source_type", "").lower() in _JSON_TYPES:
+                return f"COUNT(DISTINCT {col}::jsonb) AS {col}_distinct_count"
+            return f"COUNT(DISTINCT {col}) AS {col}_distinct_count"
+
+        distinct_parts = ",\n    ".join(_pg_distinct_expr(m) for m in mappings)
+        return (
+            f"-- ⑦ DISTINCT VALUE COUNT: PostgreSQL ({schema}.{table})\n"
+            f"-- Compare distinct counts with ⑧ — large differences indicate data drift.\n"
+            f"SELECT\n    COUNT(*) AS total_rows,\n    {distinct_parts}\n"
+            f"FROM {schema}.{table};"
+        )
+
+    # -----------------------------------------------------------------------
+    # ⑧ Distinct value count per column — Snowflake
+    # -----------------------------------------------------------------------
+
+    def _distinct_count_sf(
+        self,
+        sf_full: str,
+        mappings: List[ColumnRuleMapping],
+        fivetran_active: bool,
+    ) -> str:
+        if not mappings:
+            return ""
+
+        distinct_parts = ",\n    ".join(
+            f"COUNT(DISTINCT {m.target_column}) AS {m.source_column}_distinct_count"
+            for m in mappings
+        )
+        where = "\nWHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else ""
+        return (
+            f"-- ⑧ DISTINCT VALUE COUNT: Snowflake ({sf_full})\n"
+            f"-- Compare distinct counts with ⑦ — large differences indicate data drift.\n"
+            f"SELECT\n    COUNT(*) AS total_rows,\n    {distinct_parts}\n"
+            f"FROM {sf_full}{where};"
+        )
+
+    # -----------------------------------------------------------------------
+    # Combined file — all queries in sequence
+    # -----------------------------------------------------------------------
+
+    def _combined(self, qs: ValidationQuerySet) -> str:
+        sep  = "=" * 70
+        dash = "─" * 70
+
+        sections = [
+            f"-- {sep}",
+            f"-- MIGRATION VALIDATOR — Generated Validation Queries",
+            f"-- Table        : {qs.table_name}",
+            f"-- Source       : {qs.source_db_label}",
+            f"-- Target       : {qs.target_db_label}",
+            f"-- Generated    : {qs.generated_at}",
+            f"-- Generated by : {qs.generated_by.upper()}",
+            f"-- AI Model     : {qs.model_used}",
+            f"-- {sep}",
+            f"-- HOW TO USE:",
+            f"--   ① Run on PostgreSQL  → compare count with ②",
+            f"--   ② Run on Snowflake   → compare count with ①",
+            f"--   ③ Run on PostgreSQL  → export to CSV",
+            f"--   ④ Run on Snowflake   → export to CSV",
+            f"--   Compare ③ vs ④ row-by-row — must be IDENTICAL",
+            f"--   ⑤ Run on PostgreSQL  → compare NULL % with ⑥",
+            f"--   ⑥ Run on Snowflake   → compare NULL % with ⑤",
+            f"--   ⑦ Run on PostgreSQL  → compare distinct counts with ⑧",
+            f"--   ⑧ Run on Snowflake   → compare distinct counts with ⑦",
+            f"-- {sep}",
+            "",
+        ]
+
+        def section(label: str, sql: str) -> str:
+            if not sql:
+                return ""
+            return f"-- {dash}\n-- {label}\n-- {dash}\n{sql}\n"
+
+        sections.append(section("① ROW COUNT — PostgreSQL (Expected: matches ②)", qs.row_count_source))
+        sections.append(section("② ROW COUNT — Snowflake  (Expected: matches ①)", qs.row_count_target))
+        sections.append(section(
+            "③ MAIN VALIDATION — PostgreSQL (normalised data — export CSV, compare with ④)",
+            qs.main_validation_source,
+        ))
+        sections.append(section(
+            "④ MAIN VALIDATION — Snowflake  (normalised data — export CSV, compare with ③)",
+            qs.main_validation_target,
+        ))
+        sections.append(section(
+            "⑤ NULL % PER COLUMN — PostgreSQL (compare null_pct values with ⑥)",
+            qs.null_pct_source,
+        ))
+        sections.append(section(
+            "⑥ NULL % PER COLUMN — Snowflake  (compare null_pct values with ⑤)",
+            qs.null_pct_target,
+        ))
+        sections.append(section(
+            "⑦ DISTINCT VALUE COUNT — PostgreSQL (compare distinct_count with ⑧)",
+            qs.distinct_count_source,
+        ))
+        sections.append(section(
+            "⑧ DISTINCT VALUE COUNT — Snowflake  (compare distinct_count with ⑦)",
+            qs.distinct_count_target,
+        ))
+
+        return "\n".join(s for s in sections if s)
+
+
+# ---------------------------------------------------------------------------
+# Plan-to-mapping adapter (module-level helper)
+# ---------------------------------------------------------------------------
+
+def _plan_to_rule_mappings(
+    active_entries: "List[ColumnMappingEntry]",
+) -> List[ColumnRuleMapping]:
+    """
+    Convert CanonicalValidationPlan active_mappings to ColumnRuleMapping list.
+
+    This bridges the plan-centric data model to the existing SQL generator.
+    We look up the rule by (source_type, target_type) — same logic as StaticMapper.
+    """
+    from core.validation_plan import ColumnMappingEntry  # local import avoids cycle
+
+    result: List[ColumnRuleMapping] = []
+    for entry in active_entries:
+        if entry.skip_validation:
+            continue
+        rule = get_rule_for_type(entry.source_type, entry.target_type)
+        result.append(ColumnRuleMapping(
+            source_column=entry.source_column,
+            target_column=entry.target_column,
+            source_type=entry.source_type,
+            target_type=entry.target_type,
+            rule=rule,
+            is_primary_key=entry.is_primary_key,
+            skip_validation=False,
+            matched_by=entry.match_method,
+        ))
+    return result

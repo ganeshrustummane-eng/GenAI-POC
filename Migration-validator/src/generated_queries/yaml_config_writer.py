@@ -1,0 +1,507 @@
+"""
+YAML Config Writer
+===================
+Generates a YAML validation configuration file AUTOMATICALLY alongside
+every SQL file — triggered by QueryOutputManager.generate().
+
+YOU NEVER CREATE YAML FILES MANUALLY.
+When the pipeline runs for any table, it automatically produces:
+  validation_sql/<table>_validation.sql   ← all 8 SQL queries
+  validation_sql/<table>_validation.yaml  ← this file (auto-generated)
+
+Output format — multiple validation blocks per table:
+────────────────────────────────────────────────────────────────
+tables:
+  <source_table>:
+    validations:
+      row_count_validation:       ← ① / ② COUNT(*) only
+        source_table_name: ...
+        sourcequery: |
+          SELECT COUNT(*) AS source_row_count FROM ...;
+        target_table_name: ...
+        targetquery: |
+          SELECT COUNT(*) AS target_row_count FROM ...;
+
+      data_validation:            ← ③ / ④ normalised full-scan
+        source_table_name: ...
+        sourcecolumn: <first_column>
+        sourcequery: |
+          SELECT col1_normalized, ... FROM ...;
+        target_table_name: ...
+        targetcolumn: <FIRST_COLUMN>
+        targetquery: |
+          SELECT COL1_normalized, ... FROM ...;
+
+      null_pct_validation:        ← ⑤ / ⑥ NULL % per column
+        source_table_name: ...
+        sourcequery: |
+          SELECT COUNT(*), col1_null_pct, ... FROM ...;
+        target_table_name: ...
+        targetquery: |
+          SELECT COUNT(*), COL1_null_pct, ... FROM ...;
+
+      distinct_count_validation:  ← ⑦ / ⑧ distinct counts per column
+        source_table_name: ...
+        sourcequery: |
+          SELECT COUNT(*), col1_distinct_count, ... FROM ...;
+        target_table_name: ...
+        targetquery: |
+          SELECT COUNT(*), COL1_distinct_count, ... FROM ...;
+────────────────────────────────────────────────────────────────
+
+Key design decisions:
+  - sourcecolumn / targetcolumn only on data_validation (not needed for aggregates)
+  - YAML literal block scalar (|) used for all multi-line queries
+  - Query content is indented 10 spaces (YAML requires > 8 for nested block)
+  - Only the generator header comment is stripped; all SELECT lines kept
+  - NULL placeholder: <<NULL>>  (consistent with all SQL rules)
+  - Fivetran: WHERE _FIVETRAN_ACTIVE = TRUE added on Snowflake side when detected
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING, List, Optional
+
+from ai_transformation.static_rule_mapper import ColumnRuleMapping
+from generated_queries.sql_query_generator import ValidationQuerySet, _plan_to_rule_mappings
+
+if TYPE_CHECKING:
+    from core.validation_plan import CanonicalValidationPlan
+    from dynamic_suite.validation_suite import ValidationSuite
+
+
+# Default output directory — same folder as SQL files
+_DEFAULT_OUTPUT_DIR = Path(__file__).parent.parent.parent / "validation_sql"
+
+# Indentation for YAML literal block scalar content.
+# The 'sourcequery: |' key sits at 8-space depth inside the YAML tree.
+# All content lines must be indented MORE than 8 → we use 10 spaces.
+_QUERY_INDENT = 10
+
+
+class YAMLConfigWriter:
+    """
+    Writes YAML validation config files automatically when the pipeline runs.
+
+    This class is called by QueryOutputManager.generate() — never directly.
+    For every table the pipeline processes, one YAML file is written to
+    validation_sql/<table_name>_validation.yaml
+
+    The YAML embeds the full normalised SELECT queries for both source
+    (PostgreSQL) and target (Snowflake) so automated validation runners
+    can consume the file without any manual editing.
+    """
+
+    def write(
+        self,
+        query_set: ValidationQuerySet,
+        pg_schema: str,
+        pg_table: str,
+        sf_database: str,
+        sf_schema: str,
+        sf_table: str,
+        mappings: List[ColumnRuleMapping],
+        has_fivetran_active: bool = False,
+        output_dir: Optional[Path] = None,
+    ) -> Path:
+        """
+        Write the YAML config file for the given table pair.
+
+        Called automatically by QueryOutputManager — not manually.
+
+        Produces four validation blocks:
+          row_count_validation    — COUNT(*) queries
+          data_validation         — normalised full-scan SELECT
+          null_pct_validation     — NULL % per column
+          distinct_count_validation — distinct counts per column
+
+        Args:
+            query_set          : ValidationQuerySet with the generated SQL
+            pg_schema          : PostgreSQL schema (e.g. 'public')
+            pg_table           : PostgreSQL table name
+            sf_database        : Snowflake database name
+            sf_schema          : Snowflake schema name
+            sf_table           : Snowflake table name
+            mappings           : Active ColumnRuleMapping list
+            has_fivetran_active: True → WHERE _FIVETRAN_ACTIVE = TRUE on SF side
+            output_dir         : Output directory (default: validation_sql/)
+
+        Returns:
+            Path to the written YAML file.
+        """
+        out_dir = output_dir or _DEFAULT_OUTPUT_DIR
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        active = [m for m in mappings if not m.skip_validation]
+        first_src_col = active[0].source_column if active else "id"
+        first_tgt_col = active[0].target_column if active else "ID"
+
+        def _prep(sql: str) -> str:
+            return _indent_for_yaml(_strip_generator_header(sql), _QUERY_INDENT)
+
+        yaml_content = _build_yaml(
+            table_name_source=pg_table,
+            table_name_target=sf_table,
+            pg_schema=pg_schema,
+            sf_database=sf_database,
+            sf_schema=sf_schema,
+            source_column=first_src_col,
+            target_column=first_tgt_col,
+            row_count_source_yaml=_prep(query_set.row_count_source),
+            row_count_target_yaml=_prep(query_set.row_count_target),
+            data_source_yaml=_prep(query_set.main_validation_source),
+            data_target_yaml=_prep(query_set.main_validation_target),
+            null_pct_source_yaml=_prep(query_set.null_pct_source),
+            null_pct_target_yaml=_prep(query_set.null_pct_target),
+            distinct_source_yaml=_prep(query_set.distinct_count_source),
+            distinct_target_yaml=_prep(query_set.distinct_count_target),
+            column_count=len(active),
+            has_fivetran_active=has_fivetran_active,
+            generated_at=query_set.generated_at,
+            generated_by=query_set.generated_by,
+            model_used=query_set.model_used,
+        )
+
+        yaml_path = out_dir / f"{pg_table.lower()}_validation.yaml"
+        with open(yaml_path, "w", encoding="utf-8") as f:
+            f.write(yaml_content)
+
+        print(f"  📋 YAML auto-generated : {yaml_path.resolve()}")
+        return yaml_path
+
+    def write_dynamic_suite(
+        self,
+        suite: "ValidationSuite",
+        pg_table: str,
+        output_dir: Optional[Path] = None,
+    ) -> Path:
+        """
+        Write a YAML config for the dynamic validation suite.
+
+        Produces one validation block per generated query pair in the suite
+        (row_count, combined_aggregate, duplicate_check, etc.).
+
+        Args:
+            suite      : ValidationSuite from DynamicSuiteGenerator
+            pg_table   : Source table name (used for the file name)
+            output_dir : Output directory (default: validation_sql/)
+
+        Returns:
+            Path to the written YAML file.
+        """
+        out_dir = output_dir or _DEFAULT_OUTPUT_DIR
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        def _prep(sql: str) -> str:
+            return _indent_for_yaml(_strip_generator_header(sql), _QUERY_INDENT)
+
+        fivetran_comment = (
+            "\n#   - Fivetran  : WHERE _FIVETRAN_ACTIVE = TRUE (Snowflake side)"
+            if suite.has_fivetran_active
+            else ""
+        )
+
+        lines = [
+            "# ============================================================",
+            "# Migration Validator — Dynamic Suite YAML Validation Config",
+            f"# Table      : {suite.source_table}",
+            f"# Generated  : {suite.generated_at}",
+            f"# By         : {suite.generated_by} (model: {suite.model_used})",
+            f"# Checks     : {suite.total_query_pairs} query pair(s)",
+            f"#              {len(suite.baseline_queries)} baseline, "
+            f"{len(suite.conditional_queries)} conditional",
+            "#",
+            "# This file contains schema-aware conditional checks in addition",
+            "# to the baseline 8-query set — MIN/MAX, SUM (financial/quantity),",
+            "# duplicate checks (business keys), value distribution (enum/status),",
+            "# and optional AI-recommended business-rule checks.",
+            f"#{fivetran_comment}",
+            "# ============================================================",
+            "",
+            "tables:",
+            f"  {suite.source_table}:",
+            "    validations:",
+            "",
+        ]
+
+        for gq in suite.queries:
+            # YAML block key: derive a slug from the label
+            key = (
+                gq.label.lower()
+                .replace(" ", "_")
+                .replace("(", "")
+                .replace(")", "")
+                .replace("+", "")
+                .replace("/", "_")
+                .replace("-", "_")
+                .replace(",", "")
+                .replace(".", "")
+            )
+            # Collapse repeated underscores
+            while "__" in key:
+                key = key.replace("__", "_")
+            key = key.strip("_")
+
+            lines += [
+                f"      # ── {gq.query_number} {gq.label} ─────────────────────",
+                f"      {key}:",
+                f"        source_table_name: {suite.source_table}",
+                "        source: postgresql",
+                "        sourcequery: |",
+                _prep(gq.source_sql),
+                f"        target_table_name: {suite.target_table}",
+                "        target: snowflake",
+                "        targetquery: |",
+                _prep(gq.target_sql),
+            ]
+            if gq.comparison_note:
+                lines.append(f"        comparison_note: \"{gq.comparison_note}\"")
+            lines.append("")
+
+        # AI recommendation blocks (as informational comments)
+        if suite.ai_recommendations:
+            lines += [
+                "      # ── AI-recommended business-rule checks ──────────────",
+                "      # Run as: SELECT COUNT(*) FROM <table> WHERE NOT (<cond>)",
+                "      # Any count > 0 = data quality issue.",
+                "      # These are not executable blocks — review and adapt manually.",
+            ]
+            for rec in suite.ai_recommendations:
+                lines.append(f"      # [{rec.check_name}] {rec.description}: {rec.pg_expr}")
+
+        yaml_path = out_dir / f"{pg_table.lower()}_dynamic_suite.yaml"
+        with open(yaml_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+
+        print(f"  📋 Dynamic YAML saved  : {yaml_path.resolve()}")
+        return yaml_path
+
+    def write_from_plan(
+        self,
+        plan: "CanonicalValidationPlan",
+        query_set: ValidationQuerySet,
+        output_dir: Optional[Path] = None,
+    ) -> Path:
+        """
+        Write the YAML config file directly from a CanonicalValidationPlan.
+
+        This is the new plan-driven entry point. The plan is the single
+        source of truth — no separate column list is needed.
+
+        Args:
+            plan      : Fully constructed CanonicalValidationPlan
+            query_set : ValidationQuerySet already generated from the same plan
+            output_dir: Output directory (default: validation_sql/)
+
+        Returns:
+            Path to the written YAML file.
+        """
+        mappings = _plan_to_rule_mappings(plan.active_mappings)
+        return self.write(
+            query_set=query_set,
+            pg_schema=plan.source_schema,
+            pg_table=plan.source_table,
+            sf_database=plan.target_database,
+            sf_schema=plan.target_schema,
+            sf_table=plan.target_table,
+            mappings=mappings,
+            has_fivetran_active=plan.has_fivetran_active,
+            output_dir=output_dir,
+        )
+
+
+# ---------------------------------------------------------------------------
+# YAML content builder — exact format per project specification
+# ---------------------------------------------------------------------------
+
+def _build_yaml(
+    table_name_source: str,
+    table_name_target: str,
+    pg_schema: str,
+    sf_database: str,
+    sf_schema: str,
+    source_column: str,
+    target_column: str,
+    row_count_source_yaml: str,
+    row_count_target_yaml: str,
+    data_source_yaml: str,
+    data_target_yaml: str,
+    null_pct_source_yaml: str,
+    null_pct_target_yaml: str,
+    distinct_source_yaml: str,
+    distinct_target_yaml: str,
+    column_count: int,
+    has_fivetran_active: bool,
+    generated_at: str,
+    generated_by: str,
+    model_used: str,
+) -> str:
+    """
+    Build the complete YAML string with four validation blocks.
+
+    Indentation structure:
+      tables:                               ← 0 spaces
+        <table>:                            ← 2 spaces
+          validations:                      ← 4 spaces
+            row_count_validation:           ← 6 spaces
+              source_table_name: ...        ← 8 spaces
+              sourcequery: |               ← 8 spaces
+                <sql line>                 ← 10 spaces  (| block content)
+            data_validation:               ← 6 spaces
+              ...
+            null_pct_validation:           ← 6 spaces
+              ...
+            distinct_count_validation:     ← 6 spaces
+              ...
+    """
+    fivetran_comment = (
+        "\n#   - Fivetran  : WHERE _FIVETRAN_ACTIVE = TRUE (Snowflake side — active records only)"
+        if has_fivetran_active
+        else ""
+    )
+
+    lines = [
+        "# ============================================================",
+        "# Migration Validator — YAML Validation Config",
+        f"# Table      : {table_name_source}",
+        f"# Generated  : {generated_at}",
+        f"# By         : {generated_by} (model: {model_used})",
+        f"# Columns    : {column_count} comparable columns",
+        "#",
+        "# Validation blocks:",
+        "#   row_count_validation    — COUNT(*) on both sides",
+        "#   data_validation         — normalised full-scan SELECT (all columns)",
+        "#   null_pct_validation     — NULL % per column",
+        "#   distinct_count_validation — distinct value counts per column",
+        "#",
+        "# Normalization rules applied automatically:",
+        "#   - Boolean    : TRUE/FALSE -> '1'/'0'",
+        "#   - Numeric    : ROUND to 2 decimal places, then text",
+        "#   - Timestamp  : 'YYYY-MM-DD HH24:MI:SS'  (microseconds stripped)",
+        "#   - Timestamp_TZ: convert to UTC -> 'YYYY-MM-DD HH24:MI:SS'",
+        "#   - Date       : 'YYYY-MM-DD'",
+        "#   - Text/Char  : TRIM leading/trailing spaces",
+        "#   - UUID       : UPPER(TRIM()) — case-insensitive comparison",
+        "#   - Integer    : CAST to text",
+        "#   - JSON/JSONB : canonical serialization (jsonb::text / TO_JSON)",
+        "#   - Bytea      : hex text encoding",
+        f"#   - NULL       : COALESCE -> '<<NULL>>' sentinel (ALL columns){fivetran_comment}",
+        "# ============================================================",
+        "",
+        "tables:",
+        f"  {table_name_source}:",
+        "    validations:",
+        "",
+        "      # ── ① / ② Row count check ────────────────────────────────────",
+        "      row_count_validation:",
+        f"        source_table_name: {table_name_source}",
+        "        source: postgresql",
+        "        sourcequery: |",
+        row_count_source_yaml,
+        f"        target_table_name: {table_name_target}",
+        "        target: snowflake",
+        "        targetquery: |",
+        row_count_target_yaml,
+        "",
+        "      # ── ③ / ④ Normalised data validation (all columns) ───────────",
+        "      data_validation:",
+        f"        source_table_name: {table_name_source}",
+        "        source: postgresql",
+        f"        sourcecolumn: {source_column}",
+        "        sourcequery: |",
+        data_source_yaml,
+        f"        target_table_name: {table_name_target}",
+        "        target: snowflake",
+        f"        targetcolumn: {target_column}",
+        "        targetquery: |",
+        data_target_yaml,
+        "",
+        "      # ── ⑤ / ⑥ NULL % per column ──────────────────────────────────",
+        "      null_pct_validation:",
+        f"        source_table_name: {table_name_source}",
+        "        source: postgresql",
+        "        sourcequery: |",
+        null_pct_source_yaml,
+        f"        target_table_name: {table_name_target}",
+        "        target: snowflake",
+        "        targetquery: |",
+        null_pct_target_yaml,
+        "",
+        "      # ── ⑦ / ⑧ Distinct value counts per column ───────────────────",
+        "      distinct_count_validation:",
+        f"        source_table_name: {table_name_source}",
+        "        source: postgresql",
+        "        sourcequery: |",
+        distinct_source_yaml,
+        f"        target_table_name: {table_name_target}",
+        "        target: snowflake",
+        "        targetquery: |",
+        distinct_target_yaml,
+        "",  # trailing newline
+    ]
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# SQL helpers
+# ---------------------------------------------------------------------------
+
+def _strip_generator_header(sql: str) -> str:
+    """
+    Strip ONLY the single leading generator comment from a SQL string.
+
+    The SQLQueryGenerator prefixes each query section with exactly one
+    comment line like:
+        -- ③ SOURCE: PostgreSQL (public.events)
+
+    We remove only that first comment line so the YAML sourcequery/targetquery
+    contains clean, runnable SQL.  All other lines (including any inline
+    comments within the SELECT body) are preserved.
+
+    Args:
+        sql: SQL string that may begin with one '-- ...' header comment
+
+    Returns:
+        Clean SQL without the leading single comment header line.
+    """
+    if not sql:
+        return "SELECT 1;"
+
+    lines = sql.strip().splitlines()
+    # Remove ONLY the first line if it is the generator header comment
+    if lines and lines[0].strip().startswith("--"):
+        lines = lines[1:]
+
+    # Strip any leading blank lines left after header removal
+    while lines and not lines[0].strip():
+        lines = lines[1:]
+
+    return "\n".join(lines).strip() if lines else sql.strip()
+
+
+def _indent_for_yaml(sql: str, indent: int = 10) -> str:
+    """
+    Indent every line of a SQL query for embedding in a YAML literal block (|).
+
+    YAML literal block scalars require ALL content lines to be indented
+    more deeply than the key that introduces the block.
+
+    Example (indent=10):
+        sourcequery: |          ← key at 8-space indent
+          SELECT                ← content at 10-space indent  ✓
+              col1,
+              col2
+          FROM public.events;
+
+    Args:
+        sql   : Cleaned SQL query string
+        indent: Number of spaces to prepend to every content line
+
+    Returns:
+        SQL with each line prefixed by 'indent' spaces.
+    """
+    prefix = " " * indent
+    lines  = sql.strip().splitlines()
+    return "\n".join(f"{prefix}{line}" for line in lines)
