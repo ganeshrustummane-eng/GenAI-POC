@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List, Optional  # noqa: F401 (Optional used in generate())
 
 from ai_transformation.static_rule_mapper import ColumnRuleMapping
 from rules import get_rule_for_type
@@ -72,6 +72,17 @@ class ValidationQuerySet:
         null_pct_target        : ⑥ NULL % per column — Snowflake
         distinct_count_source  : ⑦ DISTINCT count per column — PostgreSQL
         distinct_count_target  : ⑧ DISTINCT count per column — Snowflake
+
+        -- PK-aware queries (only when primary_keys is non-empty) --
+        pk_duplicate_source    : ⑨ Duplicate PK check — PostgreSQL
+        pk_duplicate_target    : ⑩ Duplicate PK check — Snowflake
+        pk_missing_rows        : ⑪ Source PKs NOT IN target
+        pk_orphan_rows         : ⑫ Target PKs NOT IN source
+        pk_ordered_source      : ⑬ Ordered SELECT (ORDER BY pk) — PostgreSQL
+        pk_ordered_target      : ⑭ Ordered SELECT (ORDER BY pk) — Snowflake
+
+        primary_keys           : PK column list (empty = no PK, queries ⑨-⑭ omitted)
+        pk_warning             : Warning message when table has no PK
         combined_sql           : All queries combined into one file
     """
     table_name: str
@@ -89,6 +100,17 @@ class ValidationQuerySet:
     null_pct_target: str = ""
     distinct_count_source: str = ""
     distinct_count_target: str = ""
+
+    # PK-aware queries
+    pk_duplicate_source: str = ""
+    pk_duplicate_target: str = ""
+    pk_missing_rows: str = ""
+    pk_orphan_rows: str = ""
+    pk_ordered_source: str = ""
+    pk_ordered_target: str = ""
+
+    primary_keys: List[str] = field(default_factory=list)
+    pk_warning: str = ""
     combined_sql: str = ""
 
 
@@ -131,26 +153,31 @@ class SQLQueryGenerator:
         has_fivetran_active: bool = False,
         generated_by: str = "static",
         model_used: str = "N/A",
+        primary_keys: Optional[List[str]] = None,
+        target_primary_keys: Optional[List[str]] = None,
     ) -> ValidationQuerySet:
         """
         Generate all validation queries for the given table pair.
 
         Args:
-            pg_schema          : PostgreSQL schema (e.g. 'public')
-            pg_table           : PostgreSQL table name
-            sf_database        : Snowflake database name
-            sf_schema          : Snowflake schema name
-            sf_table           : Snowflake table name
-            mappings           : Column rule mappings (active only — skip_validation=False)
-            has_fivetran_active: If True, adds WHERE _FIVETRAN_ACTIVE = TRUE on SF side
-            generated_by       : 'AI' or 'static'
-            model_used         : AI model name (e.g. 'gpt-4o', 'N/A' for static)
+            pg_schema           : PostgreSQL schema (e.g. 'public')
+            pg_table            : PostgreSQL table name
+            sf_database         : Snowflake database name
+            sf_schema           : Snowflake schema name
+            sf_table            : Snowflake table name
+            mappings            : Column rule mappings (active only)
+            has_fivetran_active : If True, adds WHERE _FIVETRAN_ACTIVE = TRUE on SF side
+            generated_by        : 'AI' or 'static'
+            model_used          : AI model name (e.g. 'gpt-4o', 'N/A' for static)
+            primary_keys        : Source PK column names (enables queries ⑨-⑭)
+            target_primary_keys : Target PK column names (for cross-DB PK checks)
 
         Returns:
             ValidationQuerySet with all queries populated.
         """
-        # Only include columns that should be validated
         active = [m for m in mappings if not m.skip_validation]
+        pks    = primary_keys or []
+        tgt_pks = target_primary_keys or pks  # default to same names when not specified
 
         sf_full = (
             f"{sf_database}.{sf_schema}.{sf_table}"
@@ -164,6 +191,7 @@ class SQLQueryGenerator:
             target_db_label=f"snowflake://{sf_full}",
             generated_by=generated_by,
             model_used=model_used,
+            primary_keys=pks,
         )
 
         qs.row_count_source       = self._row_count_pg(pg_schema, pg_table)
@@ -174,8 +202,22 @@ class SQLQueryGenerator:
         qs.null_pct_target        = self._null_pct_sf(sf_full, active, has_fivetran_active)
         qs.distinct_count_source  = self._distinct_count_pg(pg_schema, pg_table, active)
         qs.distinct_count_target  = self._distinct_count_sf(sf_full, active, has_fivetran_active)
-        qs.combined_sql           = self._combined(qs)
 
+        if pks:
+            qs.pk_duplicate_source = self._pk_duplicate_pg(pg_schema, pg_table, pks)
+            qs.pk_duplicate_target = self._pk_duplicate_sf(sf_full, tgt_pks, has_fivetran_active)
+            qs.pk_missing_rows     = self._pk_missing_rows(pg_schema, pg_table, pks, sf_full, tgt_pks, has_fivetran_active)
+            qs.pk_orphan_rows      = self._pk_orphan_rows(pg_schema, pg_table, pks, sf_full, tgt_pks, has_fivetran_active)
+            qs.pk_ordered_source   = self._pk_ordered_pg(pg_schema, pg_table, active, pks)
+            qs.pk_ordered_target   = self._pk_ordered_sf(sf_full, active, tgt_pks, has_fivetran_active)
+        else:
+            qs.pk_warning = (
+                "No primary key detected — "
+                "duplicate/missing row checks (⑨-⑭) skipped. "
+                "Declare primary_keys in your batch YAML to enable them."
+            )
+
+        qs.combined_sql = self._combined(qs)
         return qs
 
     def generate_from_plan(self, plan: "CanonicalValidationPlan") -> ValidationQuerySet:
@@ -189,7 +231,7 @@ class SQLQueryGenerator:
             plan: Fully constructed and validated CanonicalValidationPlan
 
         Returns:
-            ValidationQuerySet with all 8 queries populated.
+            ValidationQuerySet with all queries populated (incl. PK queries when available).
         """
         mappings = _plan_to_rule_mappings(plan.active_mappings)
         return self.generate(
@@ -202,6 +244,8 @@ class SQLQueryGenerator:
             has_fivetran_active=plan.has_fivetran_active,
             generated_by=plan.generated_by,
             model_used=plan.model_used,
+            primary_keys=plan.source_primary_keys,
+            target_primary_keys=plan.target_primary_keys,
         )
 
     # -----------------------------------------------------------------------
@@ -400,12 +444,184 @@ class SQLQueryGenerator:
         )
 
     # -----------------------------------------------------------------------
+    # ⑨ Duplicate PK check — PostgreSQL
+    # -----------------------------------------------------------------------
+
+    def _pk_duplicate_pg(self, schema: str, table: str, pks: List[str]) -> str:
+        pk_cols = ", ".join(pks)
+        return (
+            f"-- ⑨ DUPLICATE PK CHECK: PostgreSQL ({schema}.{table})\n"
+            f"-- Expected: 0 rows. Any row here means a duplicate PK violation.\n"
+            f"SELECT {pk_cols}, COUNT(*) AS duplicate_count\n"
+            f"FROM {schema}.{table}\n"
+            f"GROUP BY {pk_cols}\n"
+            f"HAVING COUNT(*) > 1\n"
+            f"ORDER BY duplicate_count DESC;"
+        )
+
+    # -----------------------------------------------------------------------
+    # ⑩ Duplicate PK check — Snowflake
+    # -----------------------------------------------------------------------
+
+    def _pk_duplicate_sf(self, sf_full: str, tgt_pks: List[str], fivetran_active: bool) -> str:
+        pk_cols = ", ".join(tgt_pks)
+        where   = "\nWHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else ""
+        return (
+            f"-- ⑩ DUPLICATE PK CHECK: Snowflake ({sf_full})\n"
+            f"-- Expected: 0 rows. Any row here means a duplicate PK in target.\n"
+            f"SELECT {pk_cols}, COUNT(*) AS duplicate_count\n"
+            f"FROM {sf_full}{where}\n"
+            f"GROUP BY {pk_cols}\n"
+            f"HAVING COUNT(*) > 1\n"
+            f"ORDER BY duplicate_count DESC;"
+        )
+
+    # -----------------------------------------------------------------------
+    # ⑪ Missing rows — source PKs NOT found in target
+    # -----------------------------------------------------------------------
+
+    def _pk_missing_rows(
+        self,
+        pg_schema: str, pg_table: str, src_pks: List[str],
+        sf_full: str,   tgt_pks: List[str],
+        fivetran_active: bool,
+    ) -> str:
+        sf_where = "WHERE _FIVETRAN_ACTIVE = TRUE AND " if fivetran_active else "WHERE "
+        if len(src_pks) == 1:
+            src_col, tgt_col = src_pks[0], tgt_pks[0]
+            return (
+                f"-- ⑪ MISSING ROWS: source PKs not found in target\n"
+                f"-- Expected: 0 rows. Each row is a record lost during migration.\n"
+                f"SELECT src.{src_col}\n"
+                f"FROM {pg_schema}.{pg_table} src\n"
+                f"WHERE src.{src_col} NOT IN (\n"
+                f"    SELECT {tgt_col} FROM {sf_full}"
+                + (f"\n    WHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else "")
+                + f"\n);"
+            )
+        # Composite PK — use NOT EXISTS with correlated subquery
+        join_cond = " AND ".join(
+            f"src.{s} = tgt.{t}" for s, t in zip(src_pks, tgt_pks)
+        )
+        sf_where_clause = "\n    WHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else ""
+        src_select = ", ".join(f"src.{c}" for c in src_pks)
+        return (
+            f"-- ⑪ MISSING ROWS: source PKs not found in target (composite PK)\n"
+            f"-- Expected: 0 rows. Each row is a record lost during migration.\n"
+            f"SELECT {src_select}\n"
+            f"FROM {pg_schema}.{pg_table} src\n"
+            f"WHERE NOT EXISTS (\n"
+            f"    SELECT 1 FROM {sf_full} tgt{sf_where_clause}\n"
+            f"    WHERE {join_cond}\n"
+            f");"
+        )
+
+    # -----------------------------------------------------------------------
+    # ⑫ Orphan rows — target PKs NOT found in source
+    # -----------------------------------------------------------------------
+
+    def _pk_orphan_rows(
+        self,
+        pg_schema: str, pg_table: str, src_pks: List[str],
+        sf_full: str,   tgt_pks: List[str],
+        fivetran_active: bool,
+    ) -> str:
+        if len(tgt_pks) == 1:
+            src_col, tgt_col = src_pks[0], tgt_pks[0]
+            sf_where = "\nWHERE _FIVETRAN_ACTIVE = TRUE AND " if fivetran_active else "\nWHERE "
+            return (
+                f"-- ⑫ ORPHAN ROWS: target PKs not found in source\n"
+                f"-- Expected: 0 rows. Each row is an extra record inserted in target.\n"
+                f"SELECT tgt.{tgt_col}\n"
+                f"FROM {sf_full} tgt{sf_where}"
+                f"tgt.{tgt_col} NOT IN (\n"
+                f"    SELECT {src_col} FROM {pg_schema}.{pg_table}\n"
+                f");"
+            )
+        join_cond = " AND ".join(
+            f"src.{s} = tgt.{t}" for s, t in zip(src_pks, tgt_pks)
+        )
+        sf_where = "\nWHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else ""
+        tgt_select = ", ".join(f"tgt.{c}" for c in tgt_pks)
+        return (
+            f"-- ⑫ ORPHAN ROWS: target PKs not found in source (composite PK)\n"
+            f"-- Expected: 0 rows. Each row is an extra record inserted in target.\n"
+            f"SELECT {tgt_select}\n"
+            f"FROM {sf_full} tgt{sf_where}\n"
+            f"WHERE NOT EXISTS (\n"
+            f"    SELECT 1 FROM {pg_schema}.{pg_table} src\n"
+            f"    WHERE {join_cond}\n"
+            f");"
+        )
+
+    # -----------------------------------------------------------------------
+    # ⑬ Ordered validation SELECT — PostgreSQL (ORDER BY pk)
+    # -----------------------------------------------------------------------
+
+    def _pk_ordered_pg(
+        self,
+        schema: str,
+        table: str,
+        mappings: List[ColumnRuleMapping],
+        pks: List[str],
+    ) -> str:
+        if not mappings:
+            return ""
+        select_lines = []
+        for m in mappings:
+            expr = m.rule.apply_postgresql(m.source_column, alias=f"{m.source_column}_normalized")
+            select_lines.append(f"    {expr}")
+        cols     = ",\n".join(select_lines)
+        order_by = ", ".join(pks)
+        return (
+            f"-- ⑬ ORDERED VALIDATION — PostgreSQL ({schema}.{table})\n"
+            f"-- ORDER BY PK ensures reproducible row-by-row comparison with ⑭.\n"
+            f"SELECT\n{cols}\n"
+            f"FROM {schema}.{table}\n"
+            f"ORDER BY {order_by};"
+        )
+
+    # -----------------------------------------------------------------------
+    # ⑭ Ordered validation SELECT — Snowflake (ORDER BY pk)
+    # -----------------------------------------------------------------------
+
+    def _pk_ordered_sf(
+        self,
+        sf_full: str,
+        mappings: List[ColumnRuleMapping],
+        tgt_pks: List[str],
+        fivetran_active: bool,
+    ) -> str:
+        if not mappings:
+            return ""
+        select_lines = []
+        for m in mappings:
+            expr = m.rule.apply_snowflake(m.target_column, alias=f"{m.source_column}_normalized")
+            select_lines.append(f"    {expr}")
+        cols     = ",\n".join(select_lines)
+        order_by = ", ".join(tgt_pks)
+        where    = "\nWHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else ""
+        return (
+            f"-- ⑭ ORDERED VALIDATION — Snowflake ({sf_full})\n"
+            f"-- ORDER BY PK ensures reproducible row-by-row comparison with ⑬.\n"
+            f"SELECT\n{cols}\n"
+            f"FROM {sf_full}{where}\n"
+            f"ORDER BY {order_by};"
+        )
+
+    # -----------------------------------------------------------------------
     # Combined file — all queries in sequence
     # -----------------------------------------------------------------------
 
     def _combined(self, qs: ValidationQuerySet) -> str:
         sep  = "=" * 70
         dash = "─" * 70
+
+        pk_line = (
+            f"-- Primary Keys : {', '.join(qs.primary_keys)}"
+            if qs.primary_keys
+            else f"-- Primary Keys : NONE — {qs.pk_warning}"
+        )
 
         sections = [
             f"-- {sep}",
@@ -416,6 +632,7 @@ class SQLQueryGenerator:
             f"-- Generated    : {qs.generated_at}",
             f"-- Generated by : {qs.generated_by.upper()}",
             f"-- AI Model     : {qs.model_used}",
+            pk_line,
             f"-- {sep}",
             f"-- HOW TO USE:",
             f"--   ① Run on PostgreSQL  → compare count with ②",
@@ -427,9 +644,17 @@ class SQLQueryGenerator:
             f"--   ⑥ Run on Snowflake   → compare NULL % with ⑤",
             f"--   ⑦ Run on PostgreSQL  → compare distinct counts with ⑧",
             f"--   ⑧ Run on Snowflake   → compare distinct counts with ⑦",
-            f"-- {sep}",
-            "",
         ]
+        if qs.primary_keys:
+            sections += [
+                f"--   ⑨ PK DUPLICATE CHECK — PostgreSQL  (expect 0 rows)",
+                f"--   ⑩ PK DUPLICATE CHECK — Snowflake   (expect 0 rows)",
+                f"--   ⑪ MISSING ROWS — source PKs not in target (expect 0 rows)",
+                f"--   ⑫ ORPHAN  ROWS — target PKs not in source (expect 0 rows)",
+                f"--   ⑬ ORDERED VALIDATION — PostgreSQL (compare with ⑭ row-by-row)",
+                f"--   ⑭ ORDERED VALIDATION — Snowflake  (compare with ⑬ row-by-row)",
+            ]
+        sections += [f"-- {sep}", ""]
 
         def section(label: str, sql: str) -> str:
             if not sql:
@@ -462,6 +687,26 @@ class SQLQueryGenerator:
             "⑧ DISTINCT VALUE COUNT — Snowflake  (compare distinct_count with ⑦)",
             qs.distinct_count_target,
         ))
+
+        if qs.primary_keys:
+            sections.append(section(
+                "⑨ DUPLICATE PK CHECK — PostgreSQL (expect 0 rows)", qs.pk_duplicate_source,
+            ))
+            sections.append(section(
+                "⑩ DUPLICATE PK CHECK — Snowflake  (expect 0 rows)", qs.pk_duplicate_target,
+            ))
+            sections.append(section(
+                "⑪ MISSING ROWS — Source PKs not in target (expect 0 rows)", qs.pk_missing_rows,
+            ))
+            sections.append(section(
+                "⑫ ORPHAN ROWS  — Target PKs not in source (expect 0 rows)", qs.pk_orphan_rows,
+            ))
+            sections.append(section(
+                "⑬ ORDERED VALIDATION — PostgreSQL (compare row-by-row with ⑭)", qs.pk_ordered_source,
+            ))
+            sections.append(section(
+                "⑭ ORDERED VALIDATION — Snowflake  (compare row-by-row with ⑬)", qs.pk_ordered_target,
+            ))
 
         return "\n".join(s for s in sections if s)
 

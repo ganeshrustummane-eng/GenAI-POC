@@ -34,7 +34,7 @@ from typing import Dict, List, Optional
 
 from matching.candidate_matcher import MatchDecision
 from matching.fuzzy_matcher import FuzzyCandidate
-from sql_extractor.base_extractor import ColumnMetadata
+from sql_extractor.extractors import ColumnMetadata
 from ai.prompt_builder import PromptBuilder
 from ai.response_parser import ResponseParser, AIColumnDecision
 

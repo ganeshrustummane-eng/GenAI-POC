@@ -23,7 +23,7 @@ This tool automates the full workflow: **schema discovery â†’ column matching â†
 
 For each source/target table pair, it generates:
 
-1. **A `.sql` file** with 8 validation queries:
+1. **A `.sql` file** with 8 validation queries and Possible Dynamic Queries :
    - Row count (PG vs SF)
    - Main data comparison SELECT (normalised for type differences)
    - NULL % per column (PG vs SF)

@@ -85,8 +85,8 @@ try:
 except ImportError:
     pass
 
-from sql_extractor import PostgresExtractor, SnowflakeExtractor
-from sql_extractor.snowflake_extractor import FIVETRAN_ACTIVE_COLUMN
+from sql_extractor import PostgresExtractor, SnowflakeExtractor, ExtractorFactory
+from sql_extractor.extractors import FIVETRAN_ACTIVE_COLUMN
 from ai_transformation import RuleMapperOrchestrator, AVAILABLE_MODELS
 from generated_queries import QueryOutputManager, GenerationResult
 from generated_queries.yaml_config_writer import YAMLConfigWriter
@@ -121,14 +121,18 @@ class ValidationPipeline:
     If DIAL_API_KEY is not set, static rule matching is used regardless.
     """
 
-    def __init__(self, model: Optional[str] = None):
+    def __init__(self, model: Optional[str] = None, source_extractor=None):
         """
         Args:
             model: AI model name to use (e.g. 'gpt-4o', 'gpt-4o-mini').
                    Defaults to DIAL_MODEL env var, then 'gpt-4o'.
                    Has no effect when DIAL_API_KEY is not set.
+            source_extractor: Optional BaseExtractor for the source DB.
+                   Pass an MSSQLExtractor/AthenaExtractor/etc. when the source
+                   is not PostgreSQL. Defaults to PostgresExtractor() (reads
+                   SOURCE_* env vars).
         """
-        self._pg_extractor   = PostgresExtractor()
+        self._src_extractor  = source_extractor if source_extractor is not None else PostgresExtractor()
         self._sf_extractor   = SnowflakeExtractor()
         self._rule_mapper    = RuleMapperOrchestrator(model=model)
         self._output_mgr     = QueryOutputManager()
@@ -173,19 +177,23 @@ class ValidationPipeline:
         sf_table: str,
         sf_database: Optional[str] = None,
         pg_database: Optional[str] = None,
+        exclude_columns: Optional[List[str]] = None,
     ) -> GenerationResult:
         """
         Run the complete validation pipeline for one table pair.
 
         Args:
-            pg_schema   : PostgreSQL schema (e.g. 'public')
-            pg_table    : PostgreSQL table name
-            sf_schema   : Snowflake schema name
-            sf_table    : Snowflake table name (UPPER recommended)
-            sf_database : Snowflake database name
-                          (default: SNOWFLAKE_DATABASE env var)
-            pg_database : PostgreSQL database name
-                          (default: SOURCE_DATABASE env var)
+            pg_schema       : PostgreSQL schema (e.g. 'public')
+            pg_table        : PostgreSQL table name
+            sf_schema       : Snowflake schema name
+            sf_table        : Snowflake table name (UPPER recommended)
+            sf_database     : Snowflake database name
+                              (default: SNOWFLAKE_DATABASE env var)
+            pg_database     : PostgreSQL database name
+                              (default: SOURCE_DATABASE env var)
+            exclude_columns : Column names to skip entirely (source side).
+                              Case-insensitive. Excluded columns are removed
+                              before rule mapping and SQL generation.
 
         Returns:
             GenerationResult with:
@@ -202,6 +210,15 @@ class ValidationPipeline:
         print("\n[1/3] Extracting column schemas from source and target databases...")
         src_columns = self._extract_source(pg_schema, pg_table, _pg_db)
         tgt_columns = self._extract_target(sf_schema, sf_table)
+
+        # ── Column exclusion ─────────────────────────────────────────────────
+        if exclude_columns:
+            excl_upper = {c.upper() for c in exclude_columns}
+            before = len(src_columns)
+            src_columns = [c for c in src_columns if c.column_name.upper() not in excl_upper]
+            dropped = before - len(src_columns)
+            if dropped:
+                print(f"  ℹ  Column exclusion: removed {dropped} column(s) — {', '.join(exclude_columns)}")
 
         # Detect Fivetran _FIVETRAN_ACTIVE on Snowflake side
         has_fivetran_active = SnowflakeExtractor.has_fivetran_active(tgt_columns)
@@ -286,6 +303,7 @@ class ValidationPipeline:
         sf_database: Optional[str] = None,
         pg_database: Optional[str] = None,
         explicit_mappings: Optional[dict] = None,
+        exclude_columns: Optional[List[str]] = None,
     ) -> "tuple[GenerationResult, CanonicalValidationPlan]":
         """
         Run the full new pipeline using the CanonicalValidationPlan architecture.
@@ -307,6 +325,7 @@ class ValidationPipeline:
             sf_database      : Snowflake database name
             pg_database      : PostgreSQL database name
             explicit_mappings: Optional {src_col: tgt_col} override dict
+            exclude_columns  : Column names to skip (case-insensitive)
 
         Returns:
             (GenerationResult, CanonicalValidationPlan) tuple
@@ -316,15 +335,31 @@ class ValidationPipeline:
 
         _print_header_v2(pg_schema, pg_table, _sf_db, sf_schema, sf_table, self, _pg_db)
 
-        # ── Step 1: Extract schemas ──────────────────────────────────────────
+        # ── Step 1: Extract schemas + PK detection ───────────────────────────
         print("\n[1/7] Extracting schemas from source and target databases...")
         src_columns = self._extract_source(pg_schema, pg_table, _pg_db)
         tgt_columns = self._extract_target(sf_schema, sf_table)
+
+        # ── Column exclusion ─────────────────────────────────────────────────
+        if exclude_columns:
+            excl_upper = {c.upper() for c in exclude_columns}
+            before = len(src_columns)
+            src_columns = [c for c in src_columns if c.column_name.upper() not in excl_upper]
+            dropped = before - len(src_columns)
+            if dropped:
+                print(f"  ℹ  Column exclusion: removed {dropped} column(s) — {', '.join(exclude_columns)}")
 
         has_fivetran_active = SnowflakeExtractor.has_fivetran_active(tgt_columns)
         if has_fivetran_active:
             print(f"  ℹ  Fivetran _FIVETRAN_ACTIVE detected — Snowflake queries will filter active records.")
         print(f"  PostgreSQL: {len(src_columns)} columns  |  Snowflake: {len(tgt_columns)} columns")
+
+        # PK detection (non-fatal — logs warning on failure)
+        src_pk = self._src_extractor.detect_primary_key(pg_schema, pg_table)
+        tgt_pk = self._sf_extractor.detect_primary_key(sf_schema, sf_table)
+
+        if not src_pk.has_pk:
+            print(f"  ⚠ No PK found on source {pg_schema}.{pg_table} — duplicate/missing row checks will be skipped.")
 
         # ── Steps 2-4: Deterministic matching ────────────────────────────────
         print("\n[2-4/7] Running exact + fuzzy + confidence-scoring matching pipeline...")
@@ -465,6 +500,43 @@ class ValidationPipeline:
         else:
             plan_status = PlanStatus.COMPLETE.value
 
+        # ── PK mismatch detection ─────────────────────────────────────────────
+        from matching.normalizer import normalize_column_name as _norm
+        src_pk_cols = src_pk.columns if src_pk.has_pk else []
+        tgt_pk_cols = tgt_pk.columns if tgt_pk.has_pk else []
+        pk_mismatch = False
+        pk_mismatch_reason = ""
+
+        if src_pk_cols and tgt_pk_cols:
+            src_normalized = [_norm(c) for c in src_pk_cols]
+            tgt_normalized = [_norm(c) for c in tgt_pk_cols]
+            if src_normalized != tgt_normalized:
+                pk_mismatch = True
+                pk_mismatch_reason = (
+                    f"Source PK {src_pk_cols} does not match target PK {tgt_pk_cols} "
+                    f"(normalized: {src_normalized} vs {tgt_normalized}). "
+                    f"Using fuzzy/AI matching — verify manually."
+                )
+                plan_mappings_warnings = getattr(plan_mappings, 'warnings', [])
+                print(f"  ⚠ PK mismatch: {pk_mismatch_reason}")
+
+        # Mark PK columns in mappings
+        src_pk_upper = {c.upper() for c in src_pk_cols}
+        for i, m in enumerate(plan_mappings):
+            if m.source_column.upper() in src_pk_upper:
+                # rebuild with is_primary_key=True (dataclass is not frozen)
+                from dataclasses import replace as _dc_replace
+                plan_mappings[i] = _dc_replace(m, is_primary_key=True)
+
+        plan_warnings = []
+        if not src_pk_cols:
+            plan_warnings.append(
+                f"No PK detected on source {pg_schema}.{pg_table} — "
+                "duplicate/missing row checks skipped."
+            )
+        if pk_mismatch:
+            plan_warnings.append(f"PK name mismatch (WARNING): {pk_mismatch_reason}")
+
         plan = CanonicalValidationPlan(
             source_database=_pg_db,
             source_schema=pg_schema,
@@ -474,7 +546,12 @@ class ValidationPipeline:
             target_table=sf_table,
             mappings=plan_mappings,
             has_fivetran_active=has_fivetran_active,
+            source_primary_keys=src_pk_cols,
+            target_primary_keys=tgt_pk_cols,
+            pk_mismatch=pk_mismatch,
+            pk_mismatch_reason=pk_mismatch_reason,
             status=plan_status,
+            warnings=plan_warnings,
             unmatched_source_columns=unmatched_src,
             ai_calls_made=ai_calls_made,
             model_used=self._rule_mapper.active_model if self._rule_mapper.is_ai_active else "N/A",
@@ -542,11 +619,11 @@ class ValidationPipeline:
     # -----------------------------------------------------------------------
 
     def _extract_source(self, schema: str, table: str, database: str = ""):
-        """Extract PostgreSQL column metadata. Raises on failure."""
+        """Extract source column metadata. Raises on failure."""
         try:
-            return self._pg_extractor.extract_columns(schema, table, database=database or None)
+            return self._src_extractor.extract_columns(schema, table, database=database or None)
         except Exception as exc:
-            print(f"  ✗ PostgreSQL extraction failed for '{schema}.{table}': {exc}")
+            print(f"  ✗ Source extraction failed for '{schema}.{table}': {exc}")
             raise
 
     def _extract_target(self, schema: str, table: str):
@@ -587,7 +664,7 @@ def _print_header_v2(
     pg_label = f"{pg_db}.{pg_schema}.{pg_table}" if pg_db else f"{pg_schema}.{pg_table}"
     print(f"\n{sep}")
     print(f"  MIGRATION VALIDATOR — Plan-Driven Pipeline (v2)")
-    print(f"  Source  : PostgreSQL  → {pg_label}")
+    print(f"  Source  : {pg_label}")
     print(f"  Target  : Snowflake   → {sf_db}.{sf_schema}.{sf_table}")
     print(f"  Mode    : {ai_line}")
     print(f"  Steps   : Extract → Exact → Fuzzy → Score → AI(ambiguous only) → Validate → Generate")
@@ -612,7 +689,7 @@ def _print_header(
     pg_label = f"{pg_db}.{pg_schema}.{pg_table}" if pg_db else f"{pg_schema}.{pg_table}"
     print(f"\n{sep}")
     print(f"  MIGRATION VALIDATOR — Validation Pipeline")
-    print(f"  Source  : PostgreSQL  → {pg_label}")
+    print(f"  Source  : {pg_label}")
     print(f"  Target  : Snowflake   → {sf_db}.{sf_schema}.{sf_table}")
     print(f"  Mode    : {ai_line}")
     print(sep)

@@ -27,7 +27,7 @@ This is the core mechanism for token efficiency.
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from sql_extractor.base_extractor import ColumnMetadata
+from sql_extractor.extractors import ColumnMetadata
 from matching.exact_matcher import ExactMatcher, ExactMatchResult
 from matching.fuzzy_matcher import FuzzyMatcher, FuzzyCandidate
 from matching.confidence import ConfidenceScorer, ConfidenceBreakdown

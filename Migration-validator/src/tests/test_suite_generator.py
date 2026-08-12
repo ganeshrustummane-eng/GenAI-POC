@@ -13,7 +13,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sql_extractor.base_extractor import ColumnMetadata
+from sql_extractor.extractors import ColumnMetadata
 from dynamic_suite.suite_generator import DynamicSuiteGenerator
 from dynamic_suite.validation_suite import ValidationSuite
 

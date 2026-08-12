@@ -39,7 +39,7 @@ Example output:
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-from sql_extractor.base_extractor import ColumnMetadata
+from sql_extractor.extractors import ColumnMetadata
 from matching.normalizer import normalize_column_name
 
 

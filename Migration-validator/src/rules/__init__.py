@@ -1,31 +1,9 @@
 """
-Rules Package — PostgreSQL → Snowflake Validation Transformation Rules
-=======================================================================
-This package contains all type-specific transformation rules that normalize
-data from PostgreSQL (source) to Snowflake (target) for accurate comparison.
-
-Each rule handles a specific PostgreSQL → Snowflake type pair and produces
-SQL expressions that eliminate false mismatches caused by:
-  - Type representation differences   (boolean TRUE/FALSE vs 1/0)
-  - Precision differences             (numeric rounding)
-  - Timestamp formatting              (microsecond noise)
-  - Whitespace differences            (leading/trailing spaces)
-  - Case differences                  (UUID uppercase/lowercase)
-  - NULL handling                     (SQL NULL ≠ NULL, use <<NULL>> sentinel)
-  - JSON formatting                   (canonical serialization)
-  - Binary encoding                   (hex text representation)
-
-Additionally, Snowflake-specific filter:
-  - _FIVETRAN_ACTIVE = TRUE filter is applied on Snowflake side
-    to ensure only the LATEST active record is compared (not history).
-
-Rule Application Order (innermost → outermost):
-  1. integer_cast / uuid_upper / json_canonical / bytea_hex
-  2. boolean_to_flag
-  3. timestamp_format / date_format
-  4. numeric_round
-  5. text_trim / empty_string_null
-  6. null_placeholder  ← always LAST (outermost)
+Rules Package — Source → Snowflake Validation Transformation Rules
+===================================================================
+All rule logic lives in postgres_base_rules.py (the canonical implementation).
+DB-specific files (mssql_rules, athena_rules, snowflake_rules) re-export
+from there — their extractors normalize types to PG-compatible names first.
 
 Usage:
     from rules import get_rule_for_type, RuleRegistry
@@ -34,32 +12,15 @@ Usage:
     sf_expr  = rule.apply_snowflake("IS_ACTIVE")
 """
 
-from rules.base_rule import BaseValidationRule, RuleRegistry
-from rules.boolean_rule import BooleanRule
-from rules.numeric_rule import NumericRule
-from rules.timestamp_ntz_rule import TimestampNTZRule
-from rules.timestamp_tz_rule import TimestampTZRule
-from rules.date_rule import DateRule
-from rules.text_rule import TextRule
-from rules.uuid_rule import UUIDRule
-from rules.integer_rule import IntegerRule
-from rules.json_rule import JSONRule
-from rules.bytea_rule import ByteaRule
-from rules.hstore_rule import HStoreRule
-from rules.null_rule import NullPlaceholderRule
+from rules.postgres_base_rules import (
+    BaseValidationRule, RuleRegistry, NULL_PLACEHOLDER,
+    BooleanRule, NumericRule, TimestampTZRule, TimestampNTZRule,
+    DateRule, TextRule, UUIDRule, IntegerRule, JSONRule,
+    ByteaRule, HStoreRule, NullPlaceholderRule,
+)
 
-# ---------------------------------------------------------------------------
-# Build the global registry — single source of truth for rule lookup
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Registration ORDER is critical!
-# Specific rules MUST come before the TextRule wildcard ('*', '*') catch-all.
-# The registry returns the FIRST matching rule — so specifics go first.
-# ---------------------------------------------------------------------------
+# ── Global registry (registration ORDER matters — TextRule wildcard must be LAST) ──
 _registry = RuleRegistry()
-
-# 1. Exact / specific type rules (registered first — win over wildcard)
 _registry.register(BooleanRule())
 _registry.register(NumericRule())
 _registry.register(TimestampTZRule())   # TZ before NTZ (more specific)
@@ -71,25 +32,11 @@ _registry.register(JSONRule())
 _registry.register(ByteaRule())
 _registry.register(HStoreRule())
 _registry.register(NullPlaceholderRule())
-
-# 2. Text/wildcard fallback — MUST be registered LAST
-# TextRule has trigger_pairs including ('*', '*') which matches any type pair.
-# If registered before specific rules it would swallow everything.
-_registry.register(TextRule())
+_registry.register(TextRule())          # MUST be last — wildcard ('*', '*') catch-all
 
 
 def get_rule_for_type(pg_type: str, sf_type: str) -> BaseValidationRule:
-    """
-    Look up the correct validation rule for a PostgreSQL → Snowflake type pair.
-
-    Args:
-        pg_type: PostgreSQL data type (e.g. 'boolean', 'timestamp without time zone')
-        sf_type: Snowflake data type  (e.g. 'BOOLEAN', 'TIMESTAMP_NTZ')
-
-    Returns:
-        The matching BaseValidationRule instance.
-        Falls back to TextRule (trim + null placeholder) if no specific rule found.
-    """
+    """Look up the correct validation rule for a source→Snowflake type pair."""
     return _registry.lookup(pg_type, sf_type)
 
 
@@ -99,20 +46,9 @@ def get_registry() -> RuleRegistry:
 
 
 __all__ = [
-    "BaseValidationRule",
-    "RuleRegistry",
-    "BooleanRule",
-    "NumericRule",
-    "TimestampNTZRule",
-    "TimestampTZRule",
-    "DateRule",
-    "TextRule",
-    "UUIDRule",
-    "IntegerRule",
-    "JSONRule",
-    "ByteaRule",
-    "HStoreRule",
-    "NullPlaceholderRule",
-    "get_rule_for_type",
-    "get_registry",
+    "BaseValidationRule", "RuleRegistry", "NULL_PLACEHOLDER",
+    "BooleanRule", "NumericRule", "TimestampNTZRule", "TimestampTZRule",
+    "DateRule", "TextRule", "UUIDRule", "IntegerRule", "JSONRule",
+    "ByteaRule", "HStoreRule", "NullPlaceholderRule",
+    "get_rule_for_type", "get_registry",
 ]

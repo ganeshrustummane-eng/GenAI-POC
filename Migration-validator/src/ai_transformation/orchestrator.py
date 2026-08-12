@@ -31,7 +31,7 @@ Usage:
 import sys
 from typing import List, Optional, Tuple
 
-from sql_extractor.base_extractor import ColumnMetadata
+from sql_extractor.extractors import ColumnMetadata
 from ai_transformation.static_rule_mapper import StaticRuleMapper, ColumnRuleMapping
 from ai_transformation.ai_rule_mapper import AIRuleMapper, AVAILABLE_MODELS
 

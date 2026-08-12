@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from sql_extractor.base_extractor import ColumnMetadata
+from sql_extractor.extractors import ColumnMetadata
 from profiling.schema_profiler import SchemaProfiler
 from profiling.validation_rule_engine import ValidationRuleEngine
 from profiling.ai_recommendation import AIRecommendationEngine

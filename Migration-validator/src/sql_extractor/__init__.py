@@ -1,41 +1,37 @@
 """
-SQL Extractor Package
-======================
-Live schema extraction from PostgreSQL (source) and Snowflake (target).
-
-This module connects directly to databases and extracts column-level
-metadata needed to generate validation SQL queries. No static schema
-definitions — everything is discovered at runtime.
-
-Modules:
-  base_extractor      — Abstract interface all extractors implement
-  postgres_extractor  — Connects to PostgreSQL via psycopg2
-  snowflake_extractor — Connects to Snowflake via snowflake-connector-python
+SQL Extractor Package — Universal Database Schema Extractor
+============================================================
+All extractors (PostgreSQL, MSSQL, Snowflake, Athena) and shared data
+structures are consolidated in extractors.py. Import from here.
 
 Usage:
-    from sql_extractor import PostgresExtractor, SnowflakeExtractor
-
+    from sql_extractor import PostgresExtractor, SnowflakeExtractor, ExtractorFactory
     pg = PostgresExtractor()
     columns = pg.extract_columns(schema="public", table="events")
-
-    sf = SnowflakeExtractor()
-    sf_columns = sf.extract_columns(schema="STOREDGE_FMS_PUBLIC", table="EVENTS")
 """
 
-from sql_extractor.base_extractor import (
+from sql_extractor.extractors import (
     BaseExtractor,
     ColumnMetadata,
+    PrimaryKeyInfo,
     TableMetadata,
     ExtractionError,
+    PostgresExtractor,
+    MSSQLExtractor,
+    SnowflakeExtractor,
+    AthenaExtractor,
+    ExtractorFactory,
 )
-from sql_extractor.postgres_extractor import PostgresExtractor
-from sql_extractor.snowflake_extractor import SnowflakeExtractor
 
 __all__ = [
     "BaseExtractor",
     "ColumnMetadata",
+    "PrimaryKeyInfo",
     "TableMetadata",
     "ExtractionError",
     "PostgresExtractor",
+    "MSSQLExtractor",
     "SnowflakeExtractor",
+    "AthenaExtractor",
+    "ExtractorFactory",
 ]

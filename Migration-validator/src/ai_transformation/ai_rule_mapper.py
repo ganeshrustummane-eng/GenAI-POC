@@ -36,7 +36,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from sql_extractor.base_extractor import ColumnMetadata
+from sql_extractor.extractors import ColumnMetadata
 from ai_transformation.static_rule_mapper import StaticRuleMapper, ColumnRuleMapping
 from rules import get_rule_for_type
 
@@ -241,9 +241,7 @@ class AIRuleMapper:
             )
             return mappings, f"Static fallback used (AI error: {exc})."
 
-    # -----------------------------------------------------------------------
     # Prompt builders
-    # -----------------------------------------------------------------------
 
     def _build_system_prompt(self) -> str:
         """Load rules catalog and build the system prompt."""

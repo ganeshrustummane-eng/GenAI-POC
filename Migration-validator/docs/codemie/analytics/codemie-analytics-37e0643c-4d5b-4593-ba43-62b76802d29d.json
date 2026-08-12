@@ -1,0 +1,361 @@
+{
+  "meta": {
+    "generatedAt": "2026-08-12T12:22:54.083Z",
+    "rangeLabel": "all",
+    "agents": [
+      "claude"
+    ],
+    "projectFilter": "all",
+    "totals": {
+      "sessions": 1,
+      "durationMs": 6277351,
+      "turns": 90,
+      "files": 13,
+      "netLines": 2077,
+      "toolCallsTotal": 101,
+      "toolSuccessRate": 99,
+      "totalCostUSD": 9.053545199999999,
+      "cacheReadCostUSD": 2.7750912,
+      "pricedSessions": 1
+    },
+    "unpricedModels": [],
+    "coverage": [
+      {
+        "agentName": "claude",
+        "total": 1,
+        "priced": 1,
+        "withLog": 1
+      }
+    ],
+    "periodStart": "2026-08-12T10:38:13.835Z",
+    "periodEnd": "2026-08-12T12:22:51.186Z"
+  },
+  "sessions": [
+    {
+      "sessionId": "37e0643c-4d5b-4593-ba43-62b76802d29d",
+      "agentName": "claude",
+      "provider": "ai-run-sso",
+      "title": "Act as the Data Engineer with AI Proficient Our task is to whenever we are generating the YAML files that should be stored in folder structure such as migration-validator/config/bronze within this we should have our 2 folders count_validation and data_validation also can you please suggest what we can do to instead of providing the Databases names can we connect by asking it through CLI write the document for this dont implement this",
+      "project": "C:\\EPAM-Personal\\Migration-validator",
+      "branch": "master",
+      "startTime": 1786531093835,
+      "durationMs": 6277351,
+      "turns": 90,
+      "fileOps": 13,
+      "linesAdded": 2200,
+      "linesRemoved": 123,
+      "linesModified": 0,
+      "netLines": 2077,
+      "filesChanged": 4,
+      "filesWritten": 1,
+      "filesEdited": 3,
+      "toolCallsTotal": 101,
+      "toolCallsSuccess": 100,
+      "toolCallsFailure": 1,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "languages": [
+        "python",
+        "markdown",
+        "yaml"
+      ],
+      "tools": [
+        {
+          "toolName": "Read",
+          "totalCalls": 32,
+          "successCount": 32,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Edit",
+          "totalCalls": 31,
+          "successCount": 31,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Grep",
+          "totalCalls": 9,
+          "successCount": 9,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "TaskUpdate",
+          "totalCalls": 8,
+          "successCount": 8,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "PowerShell",
+          "totalCalls": 7,
+          "successCount": 7,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Bash",
+          "totalCalls": 5,
+          "successCount": 4,
+          "failureCount": 1,
+          "successRate": 80
+        },
+        {
+          "toolName": "Glob",
+          "totalCalls": 4,
+          "successCount": 4,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "TaskCreate",
+          "totalCalls": 4,
+          "successCount": 4,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Write",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        }
+      ],
+      "tokens": {
+        "input": 1158,
+        "output": 81598,
+        "cacheRead": 9250304,
+        "cacheCreation": 841835,
+        "cacheCreation1h": 841835,
+        "total": 10174895
+      },
+      "costUSD": 9.053545199999999,
+      "cacheReadCostUSD": 2.7750912,
+      "perModelCost": [
+        {
+          "model": "claude-sonnet-4-6",
+          "tokens": {
+            "input": 1158,
+            "output": 81598,
+            "cacheRead": 9250304,
+            "cacheCreation": 841835,
+            "cacheCreation1h": 841835,
+            "total": 10174895
+          },
+          "costUSD": 9.053545199999999,
+          "unpriced": false
+        }
+      ],
+      "costSeries": [
+        {
+          "t": 1786531340403,
+          "cost": 0.0779886,
+          "tokens": 45337
+        },
+        {
+          "t": 1786531357614,
+          "cost": 0.2197965,
+          "tokens": 155086
+        },
+        {
+          "t": 1786531416396,
+          "cost": 0.7257261,
+          "tokens": 361040
+        },
+        {
+          "t": 1786532012592,
+          "cost": 1.1038482,
+          "tokens": 550222
+        },
+        {
+          "t": 1786532199922,
+          "cost": 1.4533893,
+          "tokens": 815947
+        },
+        {
+          "t": 1786532239494,
+          "cost": 1.5773667,
+          "tokens": 1071112
+        },
+        {
+          "t": 1786532296224,
+          "cost": 2.2771887,
+          "tokens": 1466787
+        },
+        {
+          "t": 1786532342299,
+          "cost": 2.9619489,
+          "tokens": 1738058
+        },
+        {
+          "t": 1786532368059,
+          "cost": 3.1258821,
+          "tokens": 2013926
+        },
+        {
+          "t": 1786532408323,
+          "cost": 3.3442353,
+          "tokens": 2436518
+        },
+        {
+          "t": 1786532425581,
+          "cost": 3.4568124,
+          "tokens": 2721934
+        },
+        {
+          "t": 1786532468474,
+          "cost": 3.6296316,
+          "tokens": 3012151
+        },
+        {
+          "t": 1786532491580,
+          "cost": 3.7472748,
+          "tokens": 3305761
+        },
+        {
+          "t": 1786532522611,
+          "cost": 3.9144312,
+          "tokens": 3751482
+        },
+        {
+          "t": 1786532551058,
+          "cost": 4.6280601,
+          "tokens": 4050421
+        },
+        {
+          "t": 1786532695598,
+          "cost": 4.7353641,
+          "tokens": 4350828
+        },
+        {
+          "t": 1786533010049,
+          "cost": 4.9108533,
+          "tokens": 4806844
+        },
+        {
+          "t": 1786533432630,
+          "cost": 5.0740485,
+          "tokens": 4930653
+        },
+        {
+          "t": 1786533467072,
+          "cost": 5.4075903,
+          "tokens": 5062497
+        },
+        {
+          "t": 1786533501003,
+          "cost": 5.4961098,
+          "tokens": 5197954
+        },
+        {
+          "t": 1786533546102,
+          "cost": 5.6689428,
+          "tokens": 5410919
+        },
+        {
+          "t": 1786533569044,
+          "cost": 5.745114,
+          "tokens": 5557205
+        },
+        {
+          "t": 1786534078331,
+          "cost": 5.8093707,
+          "tokens": 5706959
+        },
+        {
+          "t": 1786534114931,
+          "cost": 6.0516012,
+          "tokens": 5884992
+        },
+        {
+          "t": 1786535816875,
+          "cost": 6.1691571,
+          "tokens": 6154106
+        },
+        {
+          "t": 1786535841166,
+          "cost": 6.2719197,
+          "tokens": 6342872
+        },
+        {
+          "t": 1786535875361,
+          "cost": 6.4460127,
+          "tokens": 6540428
+        },
+        {
+          "t": 1786535888411,
+          "cost": 6.5648157,
+          "tokens": 6836765
+        },
+        {
+          "t": 1786535898202,
+          "cost": 6.640587,
+          "tokens": 7035771
+        },
+        {
+          "t": 1786535959506,
+          "cost": 6.787563,
+          "tokens": 7240344
+        },
+        {
+          "t": 1786535966775,
+          "cost": 6.881364,
+          "tokens": 7449808
+        },
+        {
+          "t": 1786536344501,
+          "cost": 7.3475718,
+          "tokens": 7799814
+        },
+        {
+          "t": 1786536365404,
+          "cost": 7.5297486,
+          "tokens": 8045477
+        },
+        {
+          "t": 1786536568885,
+          "cost": 7.6321152,
+          "tokens": 8295724
+        },
+        {
+          "t": 1786536604619,
+          "cost": 7.8573561,
+          "tokens": 8683090
+        },
+        {
+          "t": 1786536675389,
+          "cost": 7.9571442,
+          "tokens": 8944007
+        },
+        {
+          "t": 1786537105953,
+          "cost": 8.0743104,
+          "tokens": 9208756
+        },
+        {
+          "t": 1786537144177,
+          "cost": 8.2274463,
+          "tokens": 9480617
+        },
+        {
+          "t": 1786537164240,
+          "cost": 8.9551206,
+          "tokens": 9896139
+        },
+        {
+          "t": 1786537185130,
+          "cost": 9.0535452,
+          "tokens": 10174895
+        }
+      ],
+      "skillInvocations": [],
+      "agentInvocations": [],
+      "commandInvocations": [],
+      "sessionSource": "Pure chat"
+    }
+  ]
+}

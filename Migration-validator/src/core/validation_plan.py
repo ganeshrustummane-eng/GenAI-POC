@@ -100,6 +100,8 @@ class ColumnMappingEntry:
 
     # ── Primary key (informational) ───────────────────────────────────────
     is_primary_key:      bool = False
+    pk_ordinal:          Optional[int] = None          # position in composite PK
+    composite_pk_group:  Optional[List[str]] = None   # all PK columns when composite
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dict for JSON/YAML output."""
@@ -184,6 +186,12 @@ class CanonicalValidationPlan:
     # ── Fivetran ───────────────────────────────────────────────────────────
     has_fivetran_active: bool = False
 
+    # ── Primary keys ───────────────────────────────────────────────────────
+    source_primary_keys: List[str] = field(default_factory=list)
+    target_primary_keys: List[str] = field(default_factory=list)
+    pk_mismatch: bool = False
+    pk_mismatch_reason: str = ""
+
     # ── Status and issues ──────────────────────────────────────────────────
     status:      str = PlanStatus.COMPLETE.value
     warnings:    List[str] = field(default_factory=list)
@@ -257,6 +265,12 @@ class CanonicalValidationPlan:
             "model_used":     self.model_used,
             "ai_calls_made":  self.ai_calls_made,
             "has_fivetran_active": self.has_fivetran_active,
+            "primary_keys": {
+                "source": self.source_primary_keys,
+                "target": self.target_primary_keys,
+                "mismatch": self.pk_mismatch,
+                "mismatch_reason": self.pk_mismatch_reason,
+            },
             "stats": {
                 "total_source_columns": self.total_source_columns,
                 "active_mappings":      self.active_count,

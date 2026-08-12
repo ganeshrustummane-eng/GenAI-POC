@@ -28,7 +28,7 @@ System prompt enforces:
 import json
 from typing import List, Optional
 
-from sql_extractor.base_extractor import ColumnMetadata
+from sql_extractor.extractors import ColumnMetadata
 from matching.candidate_matcher import MatchDecision
 from matching.fuzzy_matcher import FuzzyCandidate
 from matching.normalizer import normalize_column_name
@@ -102,7 +102,7 @@ class PromptBuilder:
             "1. CHOOSE from the provided candidates only — never invent column names.\n"
             "2. Return ONLY valid JSON — no markdown, no explanation outside the JSON.\n"
             "3. Assign ONE transformation rule from the table above.\n"
-            "4. Return confidence as a float 0.0–1.0.\n"
+            "4. Return confidence as a float 0.0–1.0.\n" 
             "5. If evidence is genuinely insufficient, set status='ambiguous' and "
             "   target_column to the best guess but flag it.\n"
             "6. Never execute SQL, modify data, or invent transformations.\n"

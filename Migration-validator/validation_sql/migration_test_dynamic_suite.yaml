@@ -1,7 +1,7 @@
 # ============================================================
 # Migration Validator — Dynamic Suite YAML Validation Config
 # Table      : migration_test
-# Generated  : 2026-08-11T10:54:07.498684
+# Generated  : 2026-08-12T17:51:29.131085
 # By         : AI (model: gpt-4o)
 # Checks     : 4 query pair(s)
 #              2 baseline, 2 conditional
@@ -29,7 +29,7 @@ tables:
         target: snowflake
         targetquery: |
           SELECT COUNT(*) AS target_row_count
-          FROM dev_edge_bronze.storedge_fms_public.MIGRATION_TEST WHERE _FIVETRAN_ACTIVE = TRUE;
+          FROM DEV_EDGE_BRONZE.STOREDGE_FMS_PUBLIC.MIGRATION_TEST WHERE _FIVETRAN_ACTIVE = TRUE;
         comparison_note: "source_row_count must equal target_row_count"
 
       # ── ③ / ④ Full Data Validation (normalised) ─────────────────────
@@ -42,7 +42,7 @@ tables:
               COALESCE(CAST(TRIM(col_varchar) AS TEXT), '<<NULL>>') AS col_varchar_normalized,
               COALESCE(CAST(TRIM(col_text) AS TEXT), '<<NULL>>') AS col_text_normalized,
               COALESCE(CAST(TRIM(col_char) AS TEXT), '<<NULL>>') AS col_char_normalized,
-              COALESCE(CAST(CASE WHEN col_boolean = true  THEN '1' WHEN col_boolean = false THEN '0' ELSE NULL END AS TEXT), '<<NULL>>') AS col_boolean_normalized,
+              COALESCE(CAST(CASE WHEN col_boolean = true THEN '1' WHEN col_boolean = false THEN '0' ELSE NULL END AS TEXT), '<<NULL>>') AS col_boolean_normalized,
               COALESCE(CAST(CAST(col_smallint AS TEXT) AS TEXT), '<<NULL>>') AS col_smallint_normalized,
               COALESCE(CAST(CAST(col_integer AS TEXT) AS TEXT), '<<NULL>>') AS col_integer_normalized,
               COALESCE(CAST(CAST(col_bigint AS TEXT) AS TEXT), '<<NULL>>') AS col_bigint_normalized,
@@ -67,7 +67,7 @@ tables:
               COALESCE(CAST(TRIM(COL_VARCHAR) AS STRING), '<<NULL>>') AS col_varchar_normalized,
               COALESCE(CAST(TRIM(COL_TEXT) AS STRING), '<<NULL>>') AS col_text_normalized,
               COALESCE(CAST(TRIM(COL_CHAR) AS STRING), '<<NULL>>') AS col_char_normalized,
-              COALESCE(CAST(CASE WHEN COL_BOOLEAN = TRUE  THEN '1' WHEN COL_BOOLEAN = FALSE THEN '0' ELSE NULL END AS STRING), '<<NULL>>') AS col_boolean_normalized,
+              COALESCE(CAST(CASE WHEN COL_BOOLEAN = TRUE THEN '1' WHEN COL_BOOLEAN = FALSE THEN '0' ELSE NULL END AS STRING), '<<NULL>>') AS col_boolean_normalized,
               COALESCE(CAST(CAST(COL_SMALLINT AS STRING) AS STRING), '<<NULL>>') AS col_smallint_normalized,
               COALESCE(CAST(CAST(COL_INTEGER AS STRING) AS STRING), '<<NULL>>') AS col_integer_normalized,
               COALESCE(CAST(CAST(COL_BIGINT AS STRING) AS STRING), '<<NULL>>') AS col_bigint_normalized,
@@ -83,7 +83,7 @@ tables:
               COALESCE(CAST(LOWER(HEX_ENCODE(COL_BYTEA)) AS STRING), '<<NULL>>') AS col_bytea_normalized,
               COALESCE(CAST(TRIM(COL_HSTORE) AS STRING), '<<NULL>>') AS col_hstore_normalized,
               COALESCE(CAST(TRIM(TEST_LABEL) AS STRING), '<<NULL>>') AS test_label_normalized
-          FROM dev_edge_bronze.storedge_fms_public.MIGRATION_TEST WHERE _FIVETRAN_ACTIVE = TRUE;
+          FROM DEV_EDGE_BRONZE.STOREDGE_FMS_PUBLIC.MIGRATION_TEST WHERE _FIVETRAN_ACTIVE = TRUE;
         comparison_note: "Export both to CSV. Compare row-by-row — must be identical. All values are normalised so comparison is type-safe."
 
       # ── ⑤–⑫ combined Combined Aggregate Query (NULL% + DISTINCT + MIN/MAX + VALUE_DIST) ─────────────────────
@@ -190,7 +190,7 @@ tables:
               MAX(COL_DECIMAL) AS col_decimal_max
               MIN(COL_FLOAT) AS col_float_min
               MAX(COL_FLOAT) AS col_float_max
-          FROM dev_edge_bronze.storedge_fms_public.MIGRATION_TEST WHERE _FIVETRAN_ACTIVE = TRUE;
+          FROM DEV_EDGE_BRONZE.STOREDGE_FMS_PUBLIC.MIGRATION_TEST WHERE _FIVETRAN_ACTIVE = TRUE;
         comparison_note: "Compare each _null_pct, _distinct_count, _min, _max, _sum column between source and target. Column names are identical so direct comparison is possible."
 
       # ── ⑬ / ⑭ Duplicate Check (Business Key) ─────────────────────
@@ -212,7 +212,7 @@ tables:
           SELECT
               ROW_ID,
               COUNT(*) AS duplicate_count
-          FROM dev_edge_bronze.storedge_fms_public.MIGRATION_TEST
+          FROM DEV_EDGE_BRONZE.STOREDGE_FMS_PUBLIC.MIGRATION_TEST
           WHERE _FIVETRAN_ACTIVE = TRUE
           GROUP BY ROW_ID
           HAVING COUNT(*) > 1;
@@ -222,8 +222,8 @@ tables:
       # Run as: SELECT COUNT(*) FROM <table> WHERE NOT (<cond>)
       # Any count > 0 = data quality issue.
       # These are not executable blocks — review and adapt manually.
-      # [non_negative_numeric_values] Ensure numeric columns contain non-negative values.: col_smallint < 0 OR col_integer < 0 OR col_bigint < 0 OR col_numeric < 0 OR col_decimal < 0 OR col_float < 0
-      # [boolean_null_check] Ensure boolean column does not contain NULL values if it represents a status flag.: col_boolean IS NULL
-      # [valid_date_range] Ensure temporal columns have valid date ranges (e.g., no future dates for historical data).: col_date > CURRENT_DATE OR col_timestamp_ntz > CURRENT_TIMESTAMP OR col_timestamp_tz > CURRENT_TIMESTAMP
-      # [uuid_format_check] Ensure UUID column contains valid UUIDs.: col_uuid IS NOT NULL AND col_uuid::text !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-      # [text_column_length_check] Ensure text columns do not exceed a reasonable length limit (e.g., 1000 characters).: LENGTH(col_varchar) > 1000 OR LENGTH(col_text) > 1000 OR LENGTH(col_char) > 1000 OR LENGTH(test_label) > 1000
+      # [non_negative_numeric_values] Ensure numeric columns do not contain negative values.: col_smallint < 0 OR col_integer < 0 OR col_bigint < 0 OR col_numeric < 0 OR col_decimal < 0 OR col_float < 0
+      # [boolean_null_check] Ensure boolean column does not contain NULL values if it is expected to represent a status flag.: col_boolean IS NULL
+      # [uuid_format_check] Ensure UUID column contains valid UUID values.: col_uuid::text !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      # [varchar_text_length_check] Ensure text columns do not contain excessively long values.: LENGTH(col_varchar) > 255 OR LENGTH(col_text) > 255 OR LENGTH(col_char) > 255 OR LENGTH(test_label) > 255
+      # [date_column_null_check] Ensure date columns do not contain NULL values if they are expected to represent critical timestamps.: col_date IS NULL OR col_timestamp_ntz IS NULL OR col_timestamp_tz IS NULL

@@ -13,7 +13,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sql_extractor.base_extractor import ColumnMetadata
+from sql_extractor.extractors import ColumnMetadata
 from profiling.schema_profiler import SchemaProfiler
 from profiling.validation_rule_engine import ValidationRuleEngine
 from dynamic_suite.query_optimizer import QueryOptimizer

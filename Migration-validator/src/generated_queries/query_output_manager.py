@@ -89,6 +89,7 @@ class GenerationResult:
     has_fivetran_active: bool = False
     dynamic_suite_path: Optional[Path] = None
     dynamic_suite_yaml_path: Optional[Path] = None
+    count_yaml_path: Optional[Path] = None
 
     def summary(self) -> str:
         """Return a human-readable generation summary."""
@@ -103,6 +104,7 @@ class GenerationResult:
             if self.has_fivetran_active
             else "NO"
         )
+        count_line = f"  📋 Count: {self.count_yaml_path}\n" if self.count_yaml_path else ""
         return (
             f"\n{sep}\n"
             f"  ✅ QUERY GENERATION COMPLETE\n"
@@ -115,6 +117,7 @@ class GenerationResult:
             f"  Fivetran filter: {fivetran_str}\n"
             f"\n"
             f"  💾 SQL  : {self.sql_path}\n"
+            f"{count_line}"
             f"  📋 YAML : {self.yaml_path}\n"
             f"{sep}"
         )
@@ -200,7 +203,7 @@ class QueryOutputManager:
         # ── Step 2: Save combined SQL file ────────────────────────────────────
         sql_path = self._save_sql(query_set, pg_table)
 
-        # ── Step 3: Save YAML config file ─────────────────────────────────────
+        # ── Step 3: Save YAML config file → config/bronze/data_validation/ ──────
         yaml_path = self._yaml_writer.write(
             query_set=query_set,
             pg_schema=pg_schema,
@@ -210,7 +213,17 @@ class QueryOutputManager:
             sf_table=sf_table,
             mappings=active,
             has_fivetran_active=has_fivetran_active,
-            output_dir=self._output_dir,
+        )
+
+        # ── Step 4: Save count-only YAML → config/bronze/count_validation/ ───
+        count_yaml_path = self._yaml_writer.write_count_yaml(
+            query_set=query_set,
+            pg_schema=pg_schema,
+            pg_table=pg_table,
+            sf_database=sf_database,
+            sf_schema=sf_schema,
+            sf_table=sf_table,
+            has_fivetran_active=has_fivetran_active,
         )
 
         result = GenerationResult(
@@ -223,6 +236,7 @@ class QueryOutputManager:
             generated_by=generated_by,
             model_used=model_used,
             has_fivetran_active=has_fivetran_active,
+            count_yaml_path=count_yaml_path,
         )
 
         print(result.summary())
@@ -260,9 +274,10 @@ class QueryOutputManager:
         print(f"    AI-resolved     : {len(plan.ai_resolved_matches)}")
 
         # ── SQL and YAML from the same plan ───────────────────────────────────
-        query_set = self._sql_gen.generate_from_plan(plan)
-        sql_path  = self._save_sql(query_set, plan.source_table)
-        yaml_path = self._yaml_writer.write_from_plan(plan, query_set, self._output_dir)
+        query_set       = self._sql_gen.generate_from_plan(plan)
+        sql_path        = self._save_sql(query_set, plan.source_table)
+        yaml_path       = self._yaml_writer.write_from_plan(plan, query_set)
+        count_yaml_path = self._yaml_writer.write_count_yaml_from_plan(plan, query_set)
 
         skipped_names = [m.source_column for m in skipped]
         result = GenerationResult(
@@ -275,6 +290,7 @@ class QueryOutputManager:
             generated_by=plan.generated_by,
             model_used=plan.model_used,
             has_fivetran_active=plan.has_fivetran_active,
+            count_yaml_path=count_yaml_path,
         )
         print(result.summary())
         return result
