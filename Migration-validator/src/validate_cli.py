@@ -1194,7 +1194,10 @@ def cmd_connections(args):
         if db_type == "athena":
             has_athena = True
 
-        _dim(f"Pinging {rec['host']}:{rec['port']}/{rec['database']}.{rec['schema']} ...")
+        if db_type == "athena":
+            _dim(f"Pinging Athena region={rec['host'] or 'default'}/{rec['database']} ...")
+        else:
+            _dim(f"Pinging {rec['host']}:{rec['port']}/{rec['database']}.{rec['schema']} ...")
         try:
             conn = SourceConnection(
                 index=rec["index"],
@@ -1207,11 +1210,19 @@ def cmd_connections(args):
                 password=os.getenv(f"{rec['prefix']}PASSWORD", ""),
                 auth=rec.get("auth", ""),
             )
-            ok, msg, count = _test_connection(conn)
+            if db_type == "athena":
+                from setup_wizard import _test_athena
+                ok, msg, count = _test_athena(
+                    conn,
+                    s3_output=rec.get("s3_output", ""),
+                    region=rec.get("host", ""),
+                )
+            else:
+                ok, msg, count = _test_connection(conn)
             if ok:
                 status = f"{_C.GREEN}✓ OK{_C.RESET}  {count} tables"
             else:
-                status = f"{_C.RED}✗ FAIL{_C.RESET}  {msg[:40]}"
+                status = f"{_C.RED}✗ FAIL{_C.RESET}  {msg}"
         except Exception as exc:
             status = f"{_C.RED}✗ error: {exc}{_C.RESET}"
 
@@ -1285,10 +1296,14 @@ def cmd_list_tables(args):
 
     for rec in registry:
         db_label = rec["db_label"]
-        print(f"\n  {_C.BOLD}{_C.CYAN}SRC_{rec['index']}  {db_label}{_C.RESET}"
-              f"  —  {rec['host']}:{rec['port']}/{rec['database']}.{rec['schema']}")
+        _db_type = _normalize_db_type(rec["db_type"])
+        if _db_type == "athena":
+            print(f"\n  {_C.BOLD}{_C.CYAN}SRC_{rec['index']}  {db_label}{_C.RESET}"
+                  f"  —  region={rec['host']}/{rec['database']}")
+        else:
+            print(f"\n  {_C.BOLD}{_C.CYAN}SRC_{rec['index']}  {db_label}{_C.RESET}"
+                  f"  —  {rec['host']}:{rec['port']}/{rec['database']}.{rec['schema']}")
         try:
-            _db_type = _normalize_db_type(rec["db_type"])
             extractor = ExtractorFactory.create(
                 _db_type,
                 host=rec["host"],
@@ -1297,6 +1312,7 @@ def cmd_list_tables(args):
                 username=rec["username"],
                 password=os.getenv(f"{rec['prefix']}PASSWORD", ""),
                 auth=rec.get("auth", ""),
+                s3_output=rec.get("s3_output", ""),
             )
             tables = extractor.list_tables(rec["schema"])
             if name_filter:
@@ -1796,6 +1812,13 @@ def _override_source_env(rec: dict) -> None:
     os.environ["SOURCE_AUTH"]     = rec.get("auth", "")
     src_pass = os.getenv(f"{rec['prefix']}PASSWORD", "")
     os.environ["SOURCE_PASSWORD"] = src_pass
+    # Athena-specific: propagate S3 output location and region so AthenaExtractor finds them
+    if _normalize_db_type(rec["db_type"]) == "athena":
+        s3_out = rec.get("s3_output", "")
+        if s3_out:
+            os.environ["ATHENA_S3_OUTPUT"] = s3_out
+        if rec.get("host"):
+            os.environ["ATHENA_REGION"] = rec["host"]
 
 
 def _make_source_extractor(rec: dict):
@@ -1811,6 +1834,7 @@ def _make_source_extractor(rec: dict):
         username=rec["username"],
         password=os.getenv(f"{rec['prefix']}PASSWORD", ""),
         auth=rec.get("auth", ""),
+        s3_output=rec.get("s3_output", ""),
     )
 
 
