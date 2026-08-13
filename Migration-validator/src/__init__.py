@@ -23,9 +23,10 @@ Quick Start
 
 Output
 ------
-  validation_sql/<table>_validation.sql   ← SQL queries (including PK-aware ⑨–⑭)
-  validation_sql/<table>_validation.yaml  ← YAML config for automation
-  validation_sql/batch_run_*/             ← Batch run output directory
+  config/bronze/data_validation/<table>_validation.yaml   ← column-level validation
+  config/bronze/data_validation/<table>_dynamic_suite.yaml ← schema-aware checks
+  config/bronze/count_validation/bronze_count_validation.yaml ← row counts
+  src/runs/batch_run_*/                   ← Batch run manifests and plan JSON
 
 Environment Variables (.env)
 -----------------------------

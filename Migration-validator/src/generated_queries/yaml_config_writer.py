@@ -1,16 +1,14 @@
 """
 YAML Config Writer
 ===================
-Generates a YAML validation configuration file AUTOMATICALLY alongside
-every SQL file — triggered by QueryOutputManager.generate().
+Generates YAML validation configuration files AUTOMATICALLY —
+triggered by QueryOutputManager.generate().
 
 YOU NEVER CREATE YAML FILES MANUALLY.
 When the pipeline runs for any table, it automatically produces:
-  validation_sql/<table>_validation.sql
-      ← all 8 SQL queries
-  config/bronze/data_validation/<table>_validation.yaml
+  config/bronze/data_validation/<table>.yaml
       ← data / null% / distinct blocks (no row count)
-  config/bronze/count_validation/bronze_count_validation.yaml
+  config/bronze/count_validation/bronze.yaml
       ← all tables' row count blocks in one shared file
 
 Output format — data_validation YAML (per-table file):
@@ -78,9 +76,6 @@ if TYPE_CHECKING:
     from dynamic_suite.validation_suite import ValidationSuite
 
 
-# Default output directory — same folder as SQL files
-_DEFAULT_OUTPUT_DIR = Path(__file__).parent.parent.parent / "validation_sql"
-
 # Bronze config output root:  config/bronze/
 _BRONZE_CONFIG_DIR = Path(__file__).parent.parent.parent / "config" / "bronze"
 
@@ -96,16 +91,17 @@ class YAMLConfigWriter:
 
     This class is called by QueryOutputManager.generate() — never directly.
     For every table the pipeline processes, one YAML file is written to
-    validation_sql/<table_name>_validation.yaml
+    config/bronze/data_validation/<table_name>_validation.yaml
 
     The YAML embeds the full normalised SELECT queries for both source
-    (PostgreSQL) and target (Snowflake) so automated validation runners
-    can consume the file without any manual editing.
+    and target (Snowflake) so automated validation runners can consume
+    the file without any manual editing.
     """
 
     def write(
         self,
         query_set: ValidationQuerySet,
+        source_db_type: str,
         pg_schema: str,
         pg_table: str,
         sf_database: str,
@@ -128,6 +124,7 @@ class YAMLConfigWriter:
 
         Args:
             query_set          : ValidationQuerySet with the generated SQL
+            source_db_type     : Source database type (e.g. 'postgresql', 'mssql')
             pg_schema          : PostgreSQL schema (e.g. 'public')
             pg_table           : PostgreSQL table name
             sf_database        : Snowflake database name
@@ -153,6 +150,7 @@ class YAMLConfigWriter:
         yaml_content = _build_data_yaml(
             table_name_source=pg_table,
             table_name_target=sf_table,
+            source_db_type=source_db_type,
             pg_schema=pg_schema,
             sf_database=sf_database,
             sf_schema=sf_schema,
@@ -171,7 +169,7 @@ class YAMLConfigWriter:
             model_used=query_set.model_used,
         )
 
-        yaml_path = out_dir / f"{pg_table.lower()}_validation.yaml"
+        yaml_path = out_dir / f"{pg_table.lower()}.yaml"
         with open(yaml_path, "w", encoding="utf-8") as f:
             f.write(yaml_content)
 
@@ -181,6 +179,7 @@ class YAMLConfigWriter:
     def write_count_yaml(
         self,
         query_set: ValidationQuerySet,
+        source_db_type: str,
         pg_schema: str,
         pg_table: str,
         sf_database: str,
@@ -191,31 +190,28 @@ class YAMLConfigWriter:
     ) -> Path:
         """
         Append this table's count_validation block to the shared
-        config/bronze/count_validation/bronze_count_validation.yaml.
+        config/bronze/count_validation/bronze.yaml.
 
         All tables share one file; each table is a top-level key under 'tables:'.
         The file is created on first write (with the 'tables:' header) and
         subsequent tables are appended without duplicating the header.
 
         Returns:
-            Path to the bronze_count_validation.yaml file.
+            Path to the bronze.yaml file.
         """
         out_dir = (output_dir or _BRONZE_CONFIG_DIR) / "count_validation"
         out_dir.mkdir(parents=True, exist_ok=True)
-        yaml_path = out_dir / "bronze_count_validation.yaml"
+        yaml_path = out_dir / "bronze.yaml"
 
         def _prep(sql: str) -> str:
-            # For count YAML use 10-space indent (matches the 8-space key depth)
             return _indent_for_yaml(_strip_generator_header(sql), _QUERY_INDENT)
 
-        # Build the entry block for this one table (no 'tables:' header)
-        fivetran_note = " and _FIVETRAN_ACTIVE = TRUE" if has_fivetran_active else ""
         entry_lines = [
             f"  {pg_table}:",
             "    validations:",
             "      count_validation:",
             f"        source_table_name: {pg_table}",
-            "        source: postgres",
+            f"        source: {source_db_type}",
             "        sourcequery: |",
             _prep(query_set.row_count_source),
             f"        target_table_name: {pg_table}",
@@ -226,11 +222,9 @@ class YAMLConfigWriter:
         ]
 
         if yaml_path.exists():
-            # Append the new table block (file already has 'tables:' header)
             with open(yaml_path, "a", encoding="utf-8") as f:
                 f.write("\n".join(entry_lines) + "\n")
         else:
-            # First table — write the file header + tables: key
             header_lines = [
                 "# ============================================================",
                 "# Migration Validator — Bronze Count Validation",
@@ -258,6 +252,7 @@ class YAMLConfigWriter:
         """Write the count-only YAML directly from a CanonicalValidationPlan."""
         return self.write_count_yaml(
             query_set=query_set,
+            source_db_type=plan.source_db_type,
             pg_schema=plan.source_schema,
             pg_table=plan.source_table,
             sf_database=plan.target_database,
@@ -271,6 +266,7 @@ class YAMLConfigWriter:
         self,
         suite: "ValidationSuite",
         pg_table: str,
+        source_db_type: str = "postgresql",
         output_dir: Optional[Path] = None,
     ) -> Path:
         """
@@ -280,14 +276,15 @@ class YAMLConfigWriter:
         (row_count, combined_aggregate, duplicate_check, etc.).
 
         Args:
-            suite      : ValidationSuite from DynamicSuiteGenerator
-            pg_table   : Source table name (used for the file name)
-            output_dir : Output directory (default: validation_sql/)
+            suite           : ValidationSuite from DynamicSuiteGenerator
+            pg_table        : Source table name (used for the file name)
+            source_db_type  : Source database type (default: 'postgresql')
+            output_dir      : Output directory (default: config/bronze/data_validation/)
 
         Returns:
             Path to the written YAML file.
         """
-        out_dir = output_dir or _DEFAULT_OUTPUT_DIR
+        out_dir = output_dir or (_BRONZE_CONFIG_DIR / "data_validation")
         out_dir.mkdir(parents=True, exist_ok=True)
 
         def _prep(sql: str) -> str:
@@ -323,7 +320,6 @@ class YAMLConfigWriter:
         ]
 
         for gq in suite.queries:
-            # YAML block key: derive a slug from the label
             key = (
                 gq.label.lower()
                 .replace(" ", "_")
@@ -335,7 +331,6 @@ class YAMLConfigWriter:
                 .replace(",", "")
                 .replace(".", "")
             )
-            # Collapse repeated underscores
             while "__" in key:
                 key = key.replace("__", "_")
             key = key.strip("_")
@@ -344,7 +339,7 @@ class YAMLConfigWriter:
                 f"      # ── {gq.query_number} {gq.label} ─────────────────────",
                 f"      {key}:",
                 f"        source_table_name: {suite.source_table}",
-                "        source: postgresql",
+                f"        source: {source_db_type}",
                 "        sourcequery: |",
                 _prep(gq.source_sql),
                 f"        target_table_name: {suite.target_table}",
@@ -356,7 +351,6 @@ class YAMLConfigWriter:
                 lines.append(f"        comparison_note: \"{gq.comparison_note}\"")
             lines.append("")
 
-        # AI recommendation blocks (as informational comments)
         if suite.ai_recommendations:
             lines += [
                 "      # ── AI-recommended business-rule checks ──────────────",
@@ -389,7 +383,7 @@ class YAMLConfigWriter:
         Args:
             plan      : Fully constructed CanonicalValidationPlan
             query_set : ValidationQuerySet already generated from the same plan
-            output_dir: Output directory (default: validation_sql/)
+            output_dir: Output directory (default: config/bronze/data_validation/)
 
         Returns:
             Path to the written YAML file.
@@ -397,6 +391,7 @@ class YAMLConfigWriter:
         mappings = _plan_to_rule_mappings(plan.active_mappings)
         return self.write(
             query_set=query_set,
+            source_db_type=plan.source_db_type,
             pg_schema=plan.source_schema,
             pg_table=plan.source_table,
             sf_database=plan.target_database,
@@ -415,6 +410,7 @@ class YAMLConfigWriter:
 def _build_data_yaml(
     table_name_source: str,
     table_name_target: str,
+    source_db_type: str,
     pg_schema: str,
     sf_database: str,
     sf_schema: str,
@@ -436,7 +432,7 @@ def _build_data_yaml(
     Build the data validation YAML for one table (no row count block).
 
     Output goes to config/bronze/data_validation/<table>_validation.yaml.
-    Row count lives in config/bronze/count_validation/bronze_count_validation.yaml.
+    Row count lives in config/bronze/count_validation/bronze.yaml.
 
     Indentation structure:
       tables:                               <- 0 spaces
@@ -463,7 +459,7 @@ def _build_data_yaml(
         f"# By         : {generated_by} (model: {model_used})",
         f"# Columns    : {column_count} comparable columns",
         "#",
-        "# Validation blocks (row count is in bronze_count_validation.yaml):",
+        "# Validation blocks (row count is in bronze.yaml):",
         "#   data_validation           — normalised full-scan SELECT (all columns)",
         "#   null_pct_validation       — NULL % per column",
         "#   distinct_count_validation — distinct value counts per column",
@@ -489,7 +485,7 @@ def _build_data_yaml(
         "      # ── ③ / ④ Normalised data validation (all columns) ───────────",
         "      data_validation:",
         f"        source_table_name: {table_name_source}",
-        "        source: postgresql",
+        f"        source: {source_db_type}",
         f"        sourcecolumn: {source_column}",
         "        sourcequery: |",
         data_source_yaml,
@@ -502,7 +498,7 @@ def _build_data_yaml(
         "      # ── ⑤ / ⑥ NULL % per column ──────────────────────────────────",
         "      null_pct_validation:",
         f"        source_table_name: {table_name_source}",
-        "        source: postgresql",
+        f"        source: {source_db_type}",
         "        sourcequery: |",
         null_pct_source_yaml,
         f"        target_table_name: {table_name_target}",
@@ -513,14 +509,14 @@ def _build_data_yaml(
         "      # ── ⑦ / ⑧ Distinct value counts per column ───────────────────",
         "      distinct_count_validation:",
         f"        source_table_name: {table_name_source}",
-        "        source: postgresql",
+        f"        source: {source_db_type}",
         "        sourcequery: |",
         distinct_source_yaml,
         f"        target_table_name: {table_name_target}",
         "        target: snowflake",
         "        targetquery: |",
         distinct_target_yaml,
-        "",  # trailing newline
+        "",
     ]
 
     return "\n".join(lines)

@@ -19,7 +19,6 @@ _manifest.json schema:
                 "source_table": "events",
                 "target_table": "EVENTS",
                 "status": "success",
-                "sql_path": "...",
                 "yaml_path": "...",
                 "plan_path": "...",
                 "columns_matched": 12,
@@ -46,10 +45,9 @@ class TableResult:
     source_table:     str
     target_table:     str
     status:           str       # "success" | "failed" | "skipped"
-    sql_path:         str = ""
-    yaml_path:        str = ""
-    plan_path:        str = ""
-    dynamic_sql_path: str = ""
+    yaml_path:         str = ""
+    plan_path:         str = ""
+    dynamic_yaml_path: str = ""
     columns_matched:  int = 0
     primary_keys:     List[str] = field(default_factory=list)
     duration_seconds: float = 0.0
@@ -73,7 +71,7 @@ class ManifestWriter:
         Write _manifest.json and return its path.
 
         Args:
-            run_dir       : Batch run output directory (e.g. validation_sql/batch_run_...)
+            run_dir       : Batch run output directory (e.g. src/runs/batch_run_...)
             execution_id  : Unique run identifier (e.g. 'batch_run_20260811_143022')
             started_at    : Batch start time
             completed_at  : Batch end time
@@ -150,10 +148,9 @@ def _table_result_to_dict(t: TableResult) -> Dict[str, Any]:
         "source_table":     t.source_table,
         "target_table":     t.target_table,
         "status":           t.status,
-        "sql_path":         t.sql_path,
-        "yaml_path":        t.yaml_path,
-        "plan_path":        t.plan_path,
-        "dynamic_sql_path": t.dynamic_sql_path,
+        "yaml_path":         t.yaml_path,
+        "plan_path":         t.plan_path,
+        "dynamic_yaml_path": t.dynamic_yaml_path,
         "columns_matched":  t.columns_matched,
         "primary_keys":     t.primary_keys,
         "duration_seconds": round(t.duration_seconds, 2),

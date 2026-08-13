@@ -5,17 +5,19 @@ Orchestrates multi-table validation using a BatchConfig.
 
 Output layout
 --------------
-    validation_sql/
+    src/runs/
     └── batch_run_<timestamp>/
         ├── _manifest.json
         ├── _execution_log.txt
-        ├── <table1>/
-        │   ├── <table1>_validation.sql
-        │   ├── <table1>_validation.yaml
-        │   ├── <table1>_dynamic_suite.sql
-        │   └── <table1>_plan.json
-        └── <table2>/
-            └── ...
+        └── <table1>/
+            └── <table1>_plan.json
+
+    config/bronze/data_validation/
+        ├── <table1>_validation.yaml
+        └── <table1>_dynamic_suite.yaml
+
+    config/bronze/count_validation/
+        └── bronze_count_validation.yaml  (shared, appended)
 
 Usage (Python API)
 -------------------
@@ -48,8 +50,8 @@ from batch.config_parser import BatchConfig, TablePairConfig
 from batch.manifest_writer import ManifestWriter, TableResult
 
 
-# Default output root (project_root/validation_sql)
-_OUTPUT_ROOT = Path(__file__).parent.parent.parent / "validation_sql"
+# Batch run output root (src/runs/) — stores manifests and plan JSONs
+_OUTPUT_ROOT = Path(__file__).parent.parent / "runs"
 
 
 class BatchRunner:
@@ -401,6 +403,7 @@ class BatchRunner:
 
         plan = CanonicalValidationPlan(
             source_database=src_cfg.database,
+            source_db_type=src_cfg.db_type,
             source_schema=src_schema,
             source_table=pair.source_table,
             target_database=tgt_cfg.database,
@@ -426,12 +429,12 @@ class BatchRunner:
             import json as _json
             _json.dump(plan.to_dict(), f, indent=2, ensure_ascii=False)
 
-        # Generate SQL + YAML into table_dir
-        out_mgr = QueryOutputManager(output_dir=table_dir)
+        # Generate YAML into config/bronze/ (no SQL files)
+        out_mgr = QueryOutputManager()
         gen_result = out_mgr.generate_from_plan(plan)
 
-        # Dynamic suite
-        dyn_sql_path_str = ""
+        # Dynamic suite — YAML only, written to config/bronze/data_validation/
+        dyn_yaml_path_str = ""
         try:
             from dynamic_suite import DynamicSuiteGenerator
             from generated_queries.sql_query_generator import _plan_to_rule_mappings
@@ -455,9 +458,13 @@ class BatchRunner:
                 generated_by=plan.generated_by,
                 model_used=plan.model_used,
             )
-            dyn_sql_path = table_dir / f"{pair.source_table.lower()}_dynamic_suite.sql"
-            dyn_sql_path.write_text(suite.to_combined_sql(), encoding="utf-8")
-            dyn_sql_path_str = str(dyn_sql_path)
+            yaml_writer = YAMLConfigWriter()
+            dyn_yaml_path = yaml_writer.write_dynamic_suite(
+                suite=suite,
+                pg_table=pair.source_table,
+                source_db_type=src_cfg.db_type,
+            )
+            dyn_yaml_path_str = str(dyn_yaml_path)
         except Exception as dyn_exc:
             print(f"  ⚠  Dynamic suite failed for {pair.source_table}: {dyn_exc}")
 
@@ -466,10 +473,9 @@ class BatchRunner:
             source_table=pair.source_table,
             target_table=pair.target_table,
             status="success",
-            sql_path=str(gen_result.sql_path),
             yaml_path=str(gen_result.yaml_path),
             plan_path=str(plan_path),
-            dynamic_sql_path=dyn_sql_path_str,
+            dynamic_yaml_path=dyn_yaml_path_str,
             columns_matched=active_count,
             primary_keys=src_pk_cols,
             ai_calls_made=ai_calls_made,
@@ -490,8 +496,7 @@ class BatchRunner:
         print(f"    {run_dir}/_execution_log.txt")
         for pair in config.tables:
             tbl_dir = run_dir / pair.source_table.lower()
-            print(f"    {tbl_dir}/{pair.source_table.lower()}_validation.sql")
-            print(f"    {tbl_dir}/{pair.source_table.lower()}_validation.yaml")
-            print(f"    {tbl_dir}/{pair.source_table.lower()}_dynamic_suite.sql")
+            print(f"    config/bronze/data_validation/{pair.source_table.lower()}_validation.yaml")
+            print(f"    config/bronze/data_validation/{pair.source_table.lower()}_dynamic_suite.yaml")
             print(f"    {tbl_dir}/{pair.source_table.lower()}_plan.json")
         print()

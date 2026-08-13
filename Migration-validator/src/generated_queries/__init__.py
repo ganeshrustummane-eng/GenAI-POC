@@ -42,7 +42,6 @@ Usage
         generated_by="AI",
         model_used="gpt-4o",
     )
-    print(result.sql_path)   # Path to saved .sql file
     print(result.yaml_path)  # Path to saved .yaml file
     print(result.summary())  # Human-readable summary
 """

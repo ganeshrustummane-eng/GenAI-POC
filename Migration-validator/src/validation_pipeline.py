@@ -128,11 +128,15 @@ class ValidationPipeline:
                    Defaults to DIAL_MODEL env var, then 'gpt-4o'.
                    Has no effect when DIAL_API_KEY is not set.
             source_extractor: Optional BaseExtractor for the source DB.
-                   Pass an MSSQLExtractor/AthenaExtractor/etc. when the source
-                   is not PostgreSQL. Defaults to PostgresExtractor() (reads
-                   SOURCE_* env vars).
+                   When None, the constructor reads SOURCE_TYPE from the
+                   environment and creates the correct extractor automatically
+                   (PostgreSQL, MSSQL, Athena, etc.).
         """
-        self._src_extractor  = source_extractor if source_extractor is not None else PostgresExtractor()
+        if source_extractor is not None:
+            self._src_extractor = source_extractor
+        else:
+            src_type = os.getenv("SOURCE_TYPE", "postgresql")
+            self._src_extractor = ExtractorFactory.create(src_type)
         self._sf_extractor   = SnowflakeExtractor()
         self._rule_mapper    = RuleMapperOrchestrator(model=model)
         self._output_mgr     = QueryOutputManager()
@@ -178,6 +182,7 @@ class ValidationPipeline:
         sf_database: Optional[str] = None,
         pg_database: Optional[str] = None,
         exclude_columns: Optional[List[str]] = None,
+        source_db_type: Optional[str] = None,
     ) -> GenerationResult:
         """
         Run the complete validation pipeline for one table pair.
@@ -194,16 +199,18 @@ class ValidationPipeline:
             exclude_columns : Column names to skip entirely (source side).
                               Case-insensitive. Excluded columns are removed
                               before rule mapping and SQL generation.
+            source_db_type  : Source database type (e.g. 'postgresql', 'mssql')
+                              (default: SOURCE_TYPE env var)
 
         Returns:
             GenerationResult with:
-              .sql_path   — path to generated .sql file
-              .yaml_path  — path to generated .yaml file
-              .summary()  — human-readable result summary
+              .yaml_path       — path to generated data validation .yaml file
+              .count_yaml_path — path to count validation .yaml file
+              .summary()       — human-readable result summary
         """
         _sf_db = sf_database or os.getenv("SNOWFLAKE_DATABASE", "")
-
         _pg_db = pg_database or os.getenv("SOURCE_DATABASE", "")
+        _src_db_type = source_db_type or os.getenv("SOURCE_TYPE", "postgresql")
         _print_header(pg_schema, pg_table, _sf_db, sf_schema, sf_table, self, _pg_db)
 
         # ── Step 1: Extract schemas ──────────────────────────────────────────
@@ -228,8 +235,9 @@ class ValidationPipeline:
                 f"Snowflake queries will include WHERE _FIVETRAN_ACTIVE = TRUE."
             )
 
+        src_type_label = os.getenv("SOURCE_TYPE", "source").upper()
         print(f"\n  Schema Summary:")
-        print(f"    PostgreSQL columns : {len(src_columns)}")
+        print(f"    {src_type_label:<10} columns : {len(src_columns)}")
         print(f"    Snowflake  columns : {len(tgt_columns)}")
 
         # ── Step 2: Map columns + assign rules ───────────────────────────────
@@ -261,6 +269,7 @@ class ValidationPipeline:
             has_fivetran_active=has_fivetran_active,
             generated_by=generated_by,
             model_used=model_used,
+            source_db_type=_src_db_type,
         )
 
         # ── Dynamic suite (additive — runs after baseline) ────────────────────
@@ -279,14 +288,10 @@ class ValidationPipeline:
                 generated_by=generated_by,
                 model_used=model_used,
             )
-            dyn_sql_path = result.sql_path.parent / f"{pg_table.lower()}_dynamic_suite.sql"
-            dyn_sql_path.write_text(suite.to_combined_sql(), encoding="utf-8")
-            print(f"  💾 Dynamic suite saved : {dyn_sql_path.resolve()}")
-            result.dynamic_suite_path = dyn_sql_path
             dyn_yaml_path = self._yaml_writer.write_dynamic_suite(
                 suite=suite,
                 pg_table=pg_table,
-                output_dir=result.sql_path.parent,
+                source_db_type=_src_db_type,
             )
             result.dynamic_suite_yaml_path = dyn_yaml_path
         except Exception as dyn_exc:
@@ -352,7 +357,8 @@ class ValidationPipeline:
         has_fivetran_active = SnowflakeExtractor.has_fivetran_active(tgt_columns)
         if has_fivetran_active:
             print(f"  ℹ  Fivetran _FIVETRAN_ACTIVE detected — Snowflake queries will filter active records.")
-        print(f"  PostgreSQL: {len(src_columns)} columns  |  Snowflake: {len(tgt_columns)} columns")
+        src_type_lbl = os.getenv("SOURCE_TYPE", "source").upper()
+        print(f"  {src_type_lbl}: {len(src_columns)} columns  |  Snowflake: {len(tgt_columns)} columns")
 
         # PK detection (non-fatal — logs warning on failure)
         src_pk = self._src_extractor.detect_primary_key(pg_schema, pg_table)
@@ -539,6 +545,7 @@ class ValidationPipeline:
 
         plan = CanonicalValidationPlan(
             source_database=_pg_db,
+            source_db_type=_src_db_type,
             source_schema=pg_schema,
             source_table=pg_table,
             target_database=_sf_db,
@@ -599,14 +606,10 @@ class ValidationPipeline:
                 generated_by=plan.generated_by,
                 model_used=plan.model_used,
             )
-            dyn_sql_path = result.sql_path.parent / f"{pg_table.lower()}_dynamic_suite.sql"
-            dyn_sql_path.write_text(suite.to_combined_sql(), encoding="utf-8")
-            print(f"  💾 Dynamic suite saved : {dyn_sql_path.resolve()}")
-            result.dynamic_suite_path = dyn_sql_path
             dyn_yaml_path = self._yaml_writer.write_dynamic_suite(
                 suite=suite,
                 pg_table=pg_table,
-                output_dir=result.sql_path.parent,
+                source_db_type=_src_db_type,
             )
             result.dynamic_suite_yaml_path = dyn_yaml_path
         except Exception as dyn_exc:

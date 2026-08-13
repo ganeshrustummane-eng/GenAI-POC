@@ -40,10 +40,10 @@ from matching.normalizer import normalize_column_name
 # ---------------------------------------------------------------------------
 
 _CORE_RULES_SUMMARY = """
-## Transformation Rules (PostgreSQL → Snowflake)
+## Transformation Rules (Source → Snowflake)
 Apply the MOST SPECIFIC matching rule. Use "text" as the default fallback.
 
-| Rule ID         | PG Type(s)                          | SF Type(s)         | What it does                        |
+| Rule ID         | Source Type(s)                      | SF Type(s)         | What it does                        |
 |-----------------|--------------------------------------|--------------------|-------------------------------------|
 | boolean         | boolean, bool                        | BOOLEAN, BOOL      | TRUE/FALSE → '1'/'0'               |
 | numeric         | numeric, decimal, float, real, money | NUMBER, FLOAT      | ROUND to 2dp → text                |
@@ -92,7 +92,7 @@ class PromptBuilder:
         """
         return (
             "You are a Senior Data Migration QA Engineer specialising in "
-            "PostgreSQL → Snowflake migration validation.\n\n"
+            "data migration validation.\n\n"
             "Your task: resolve an ambiguous column mapping. "
             "You will receive one source column and a ranked list of candidate "
             "target columns. Choose the BEST match or return 'ambiguous' if "
@@ -102,7 +102,7 @@ class PromptBuilder:
             "1. CHOOSE from the provided candidates only — never invent column names.\n"
             "2. Return ONLY valid JSON — no markdown, no explanation outside the JSON.\n"
             "3. Assign ONE transformation rule from the table above.\n"
-            "4. Return confidence as a float 0.0–1.0.\n" 
+            "4. Return confidence as a float 0.0–1.0.\n"
             "5. If evidence is genuinely insufficient, set status='ambiguous' and "
             "   target_column to the best guess but flag it.\n"
             "6. Never execute SQL, modify data, or invent transformations.\n"
@@ -112,8 +112,8 @@ class PromptBuilder:
             '  "status": "resolved" | "ambiguous",\n'
             '  "source_column": "<source_name>",\n'
             '  "target_column": "<chosen_target_name_from_candidates>",\n'
-            '  "source_type": "<pg_type>",\n'
-            '  "target_type": "<sf_type>",\n'
+            '  "source_type": "<source_type>",\n'
+            '  "target_type": "<target_type>",\n'
             '  "transformation_rule": "<rule_id>",\n'
             '  "confidence": 0.0,\n'
             '  "reason": "<one sentence explaining the decision>"\n'

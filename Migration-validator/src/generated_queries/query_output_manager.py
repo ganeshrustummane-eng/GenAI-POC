@@ -5,9 +5,11 @@ Orchestrates SQL generation + YAML config writing for one table.
 
 This is the single entry point used by the pipeline to:
   1. Build all validation SQL queries via SQLQueryGenerator
-  2. Save combined SQL file  → validation_sql/<table>_validation.sql
-  3. Save YAML config file   → validation_sql/<table>_validation.yaml
+  2. Save YAML config file   → config/bronze/data_validation/<table>.yaml
+  3. Save count YAML         → config/bronze/count_validation/bronze.yaml
   4. Return a GenerationResult with paths and summary
+
+SQL files are NOT written to disk — queries live only inside the YAML files.
 
 PK-Free Design
 --------------
@@ -36,7 +38,6 @@ Usage:
         generated_by="AI",
         model_used="gpt-4o",
     )
-    print(result.sql_path)   # Path to saved .sql file
     print(result.yaml_path)  # Path to saved .yaml file
     print(result.summary())  # Human-readable summary
 """
@@ -54,10 +55,6 @@ from generated_queries.yaml_config_writer import YAMLConfigWriter
 if TYPE_CHECKING:
     from core.validation_plan import CanonicalValidationPlan
 
-# Default output directory (project root / validation_sql)
-_DEFAULT_OUTPUT_DIR = Path(__file__).parent.parent.parent / "validation_sql"
-
-
 # ---------------------------------------------------------------------------
 # Result container
 # ---------------------------------------------------------------------------
@@ -69,9 +66,8 @@ class GenerationResult:
 
     Attributes:
         table_name         : Source table name
-        sql_path           : Absolute path to the generated .sql file
-        yaml_path          : Absolute path to the generated .yaml file
-        query_set          : Full ValidationQuerySet (all SQL strings)
+        yaml_path          : Absolute path to the generated data validation .yaml file
+        query_set          : Full ValidationQuerySet (all SQL strings, not written to disk)
         active_columns     : Number of columns included in validation
         skipped_columns    : Column names excluded (complex types / no match)
         generated_by       : 'AI' or 'static'
@@ -79,7 +75,6 @@ class GenerationResult:
         has_fivetran_active: Whether Snowflake _FIVETRAN_ACTIVE filter was applied
     """
     table_name: str
-    sql_path: Path
     yaml_path: Path
     query_set: ValidationQuerySet
     active_columns: int = 0
@@ -87,7 +82,6 @@ class GenerationResult:
     generated_by: str = "static"
     model_used: str = "N/A"
     has_fivetran_active: bool = False
-    dynamic_suite_path: Optional[Path] = None
     dynamic_suite_yaml_path: Optional[Path] = None
     count_yaml_path: Optional[Path] = None
 
@@ -104,7 +98,8 @@ class GenerationResult:
             if self.has_fivetran_active
             else "NO"
         )
-        count_line = f"  📋 Count: {self.count_yaml_path}\n" if self.count_yaml_path else ""
+        count_line = f"  📋 Count YAML : {self.count_yaml_path}\n" if self.count_yaml_path else ""
+        dyn_line   = f"  📋 Dynamic YAML: {self.dynamic_suite_yaml_path}\n" if self.dynamic_suite_yaml_path else ""
         return (
             f"\n{sep}\n"
             f"  ✅ QUERY GENERATION COMPLETE\n"
@@ -116,9 +111,9 @@ class GenerationResult:
             f"  Skipped columns: {len(self.skipped_columns)}{skip_detail}\n"
             f"  Fivetran filter: {fivetran_str}\n"
             f"\n"
-            f"  💾 SQL  : {self.sql_path}\n"
-            f"{count_line}"
             f"  📋 YAML : {self.yaml_path}\n"
+            f"{count_line}"
+            f"{dyn_line}"
             f"{sep}"
         )
 
@@ -129,19 +124,14 @@ class GenerationResult:
 
 class QueryOutputManager:
     """
-    Orchestrates SQL generation + file output for a single table pair.
+    Orchestrates SQL generation + YAML file output for a single table pair.
 
-    Produces two files per table:
-      <table>_validation.sql   — all 6 validation queries (no PK queries)
-      <table>_validation.yaml  — YAML config for automated validation runners
+    Produces YAML files only (no SQL files written to disk):
+      config/bronze/data_validation/<table>.yaml
+      config/bronze/count_validation/bronze.yaml
     """
 
-    def __init__(self, output_dir: Optional[Path] = None):
-        """
-        Args:
-            output_dir: Directory for output files (default: validation_sql/)
-        """
-        self._output_dir  = output_dir or _DEFAULT_OUTPUT_DIR
+    def __init__(self):
         self._sql_gen     = SQLQueryGenerator()
         self._yaml_writer = YAMLConfigWriter()
 
@@ -157,6 +147,7 @@ class QueryOutputManager:
         has_fivetran_active: bool = False,
         generated_by: str = "static",
         model_used: str = "N/A",
+        source_db_type: str = "postgresql",
     ) -> GenerationResult:
         """
         Generate all validation output for one table pair.
@@ -172,12 +163,11 @@ class QueryOutputManager:
             has_fivetran_active: Add WHERE _FIVETRAN_ACTIVE = TRUE on Snowflake side
             generated_by       : 'AI' or 'static'
             model_used         : AI model name used (e.g. 'gpt-4o')
+            source_db_type     : Source database type (default: 'postgresql')
 
         Returns:
-            GenerationResult with sql_path, yaml_path, and summary stats.
+            GenerationResult with yaml_path, count_yaml_path, and summary stats.
         """
-        self._output_dir.mkdir(parents=True, exist_ok=True)
-
         active  = [m for m in mappings if not m.skip_validation]
         skipped = [m.source_column for m in mappings if m.skip_validation]
 
@@ -187,7 +177,7 @@ class QueryOutputManager:
         print(f"    Fivetran filter : {has_fivetran_active}")
         print(f"    Generated by    : {generated_by} (model: {model_used})")
 
-        # ── Step 1: Generate all SQL queries ─────────────────────────────────
+        # ── Step 1: Generate all SQL queries (in memory only) ─────────────────
         query_set = self._sql_gen.generate(
             pg_schema=pg_schema,
             pg_table=pg_table,
@@ -198,14 +188,13 @@ class QueryOutputManager:
             has_fivetran_active=has_fivetran_active,
             generated_by=generated_by,
             model_used=model_used,
+            source_db_type=source_db_type,
         )
 
-        # ── Step 2: Save combined SQL file ────────────────────────────────────
-        sql_path = self._save_sql(query_set, pg_table)
-
-        # ── Step 3: Save YAML config file → config/bronze/data_validation/ ──────
+        # ── Step 2: Save YAML config file → config/bronze/data_validation/ ───
         yaml_path = self._yaml_writer.write(
             query_set=query_set,
+            source_db_type=source_db_type,
             pg_schema=pg_schema,
             pg_table=pg_table,
             sf_database=sf_database,
@@ -215,9 +204,10 @@ class QueryOutputManager:
             has_fivetran_active=has_fivetran_active,
         )
 
-        # ── Step 4: Save count-only YAML → config/bronze/count_validation/ ───
+        # ── Step 3: Save count-only YAML → config/bronze/count_validation/ ───
         count_yaml_path = self._yaml_writer.write_count_yaml(
             query_set=query_set,
+            source_db_type=source_db_type,
             pg_schema=pg_schema,
             pg_table=pg_table,
             sf_database=sf_database,
@@ -228,7 +218,6 @@ class QueryOutputManager:
 
         result = GenerationResult(
             table_name=table_name,
-            sql_path=sql_path,
             yaml_path=yaml_path,
             query_set=query_set,
             active_columns=len(active),
@@ -250,17 +239,15 @@ class QueryOutputManager:
         """
         Generate all validation output from a CanonicalValidationPlan.
 
-        This is the new plan-driven entry point. Both SQL and YAML are
-        generated from the same plan object — guaranteed to be in sync.
+        Both YAML files are generated from the same plan object — guaranteed
+        to be in sync. No SQL files are written to disk.
 
         Args:
             plan: Fully validated CanonicalValidationPlan
 
         Returns:
-            GenerationResult with sql_path, yaml_path, and summary stats.
+            GenerationResult with yaml_path, count_yaml_path, and summary stats.
         """
-        self._output_dir.mkdir(parents=True, exist_ok=True)
-
         active  = plan.active_mappings
         skipped = plan.skipped_mappings
 
@@ -273,16 +260,14 @@ class QueryOutputManager:
         print(f"    Fuzzy matches   : {len(plan.fuzzy_matches)}")
         print(f"    AI-resolved     : {len(plan.ai_resolved_matches)}")
 
-        # ── SQL and YAML from the same plan ───────────────────────────────────
+        # ── YAML from the same plan (SQL stays in memory only) ───────────────
         query_set       = self._sql_gen.generate_from_plan(plan)
-        sql_path        = self._save_sql(query_set, plan.source_table)
         yaml_path       = self._yaml_writer.write_from_plan(plan, query_set)
         count_yaml_path = self._yaml_writer.write_count_yaml_from_plan(plan, query_set)
 
         skipped_names = [m.source_column for m in skipped]
         result = GenerationResult(
             table_name=plan.source_table,
-            sql_path=sql_path,
             yaml_path=yaml_path,
             query_set=query_set,
             active_columns=len(active),
@@ -294,11 +279,3 @@ class QueryOutputManager:
         )
         print(result.summary())
         return result
-
-    def _save_sql(self, query_set: ValidationQuerySet, table_name: str) -> Path:
-        """Save the combined SQL validation file to disk."""
-        sql_path = self._output_dir / f"{table_name.lower()}_validation.sql"
-        with open(sql_path, "w", encoding="utf-8") as f:
-            f.write(query_set.combined_sql)
-        print(f"  💾 SQL  saved : {sql_path.resolve()}")
-        return sql_path
