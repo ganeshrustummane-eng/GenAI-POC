@@ -605,52 +605,82 @@ def _test_snowflake_source(conn: SourceConnection) -> Tuple[bool, str, int]:
         return False, str(exc), -1
 
 
-def _test_athena(conn: SourceConnection) -> Tuple[bool, str, int]:
+def _test_athena(conn: SourceConnection, s3_output: str = "", region: str = "") -> Tuple[bool, str, int]:
     """
-    Test AWS Athena connectivity by running a lightweight INFORMATION_SCHEMA query.
+    Test AWS Athena connectivity via the Glue Data Catalog (boto3 get_tables).
 
-    Reads Athena-specific settings from conn.host (region), conn.database,
-    and additional env vars ATHENA_S3_OUTPUT, ATHENA_CATALOG, ATHENA_WORKGROUP.
-    The conn.host field is repurposed as the AWS region for Athena.
+    Uses Glue rather than running an Athena SQL query so the ping works even when
+    the Athena workgroup has IAM access control restrictions.  Falls back to an
+    Athena SQL query only if boto3 is unavailable.
+
+    Callers may pass s3_output and region directly (e.g. from SRC_N_QUERY_RESULT_LOCATION
+    and SRC_N_REGION) to avoid relying solely on global env vars.
     """
-    s3_output = os.getenv("ATHENA_S3_OUTPUT", "")
+    region   = (region or conn.host or os.getenv("ATHENA_REGION", "us-east-1")).strip()
+    database = conn.database
+
+    boto3_kwargs = dict(region_name=region)
+    if conn.username and conn.password:
+        boto3_kwargs["aws_access_key_id"]     = conn.username
+        boto3_kwargs["aws_secret_access_key"] = conn.password
+
+    try:
+        import boto3
+        glue = boto3.client("glue", **boto3_kwargs)
+        paginator = glue.get_paginator("get_tables")
+        count = 0
+        for page in paginator.paginate(DatabaseName=database):
+            count += len(page.get("TableList", []))
+        return True, f"Athena/Glue region={region}", count
+    except ImportError:
+        pass  # boto3 not installed — fall back to pyathena SQL below
+    except Exception as exc:
+        err = str(exc)
+        if "NoCredentialsError" in type(exc).__name__ or "NoCredentialsError" in err:
+            return False, "AWS credentials not found — set SRC_N_USERNAME/PASSWORD or configure ~/.aws/credentials", -1
+        return False, err, -1
+
+    # ── Fallback: pyathena SQL query ──────────────────────────────────────────
+    s3_output = (s3_output or os.getenv("ATHENA_S3_OUTPUT", "")).strip()
     if not s3_output:
         return False, "ATHENA_S3_OUTPUT is not set in .env — required for Athena", -1
-
-    catalog   = os.getenv("ATHENA_CATALOG",   "AwsDataCatalog")
-    workgroup = os.getenv("ATHENA_WORKGROUP",  "primary")
-    region    = conn.host or os.getenv("ATHENA_REGION", "us-east-1")
-    database  = conn.database
 
     try:
         import pyathena
     except ImportError:
-        return False, "pyathena not installed — run: pip install pyathena", -1
+        return False, "boto3 and pyathena are both unavailable — run: pip install boto3", -1
 
+    catalog   = os.getenv("ATHENA_CATALOG",   "AwsDataCatalog")
+    workgroup = os.getenv("ATHENA_WORKGROUP",  "primary")
     kwargs = dict(
-        region_name=region,
-        s3_staging_dir=s3_output,
-        catalog_name=catalog,
-        work_group=workgroup,
-        schema_name=database,
+        region_name=region, s3_staging_dir=s3_output,
+        catalog_name=catalog, work_group=workgroup, schema_name=database,
     )
     if conn.username and conn.password:
         kwargs["aws_access_key_id"]     = conn.username
         kwargs["aws_secret_access_key"] = conn.password
 
+    import io, sys
     try:
-        c = pyathena.connect(**kwargs)
+        c   = pyathena.connect(**kwargs)
         cur = c.cursor()
-        cur.execute(
-            f"SELECT COUNT(*) FROM information_schema.tables "
-            f"WHERE table_schema = '{database.lower()}' "
-            f"AND table_type IN ('BASE TABLE', 'EXTERNAL TABLE')"
-        )
+        _save, sys.stderr = sys.stderr, io.StringIO()
+        try:
+            cur.execute(
+                f"SELECT COUNT(*) FROM information_schema.tables "
+                f"WHERE table_schema = '{database.lower()}' "
+                f"AND table_type IN ('BASE TABLE', 'EXTERNAL TABLE')"
+            )
+        finally:
+            sys.stderr = _save
         count = cur.fetchone()[0]
         c.close()
         return True, f"Athena region={region} catalog={catalog}", int(count)
     except Exception as exc:
-        return False, str(exc), -1
+        err = str(exc)
+        if "NoCredentialsError" in type(exc).__name__ or "NoCredentialsError" in err:
+            return False, "AWS credentials not found — set SRC_N_USERNAME/PASSWORD or configure ~/.aws/credentials", -1
+        return False, err, -1
 
 
 def _test_snowflake_target(account, database, schema, username, password,
@@ -1373,24 +1403,31 @@ def print_connection_registry(env_path: Optional[Path] = None) -> List[Dict]:
         if not db_type:
             continue
         db_label, _ = DB_TYPES.get(db_type, (db_type, 0))
-        host = env.get(f"{p}HOST", "")
+        # Athena uses SRC_N_REGION instead of SRC_N_HOST
+        if db_type.lower() in ("athena", "aws_athena"):
+            host = env.get(f"{p}REGION", env.get(f"{p}HOST", ""))
+        else:
+            host = env.get(f"{p}HOST", "")
         port = env.get(f"{p}PORT", "")
         database = env.get(f"{p}DATABASE", "")
         schema = env.get(f"{p}SCHEMA", "")
         username = env.get(f"{p}USERNAME", "")
         auth = env.get(f"{p}AUTH", "")
+        # Athena-specific: S3 result location (SRC_N_QUERY_RESULT_LOCATION or global ATHENA_S3_OUTPUT)
+        s3_output = env.get(f"{p}QUERY_RESULT_LOCATION", env.get("ATHENA_S3_OUTPUT", ""))
         connections.append({
-            "index":    i,
-            "prefix":   p,
-            "db_type":  db_type,
-            "db_label": db_label,
-            "host":     host,
-            "port":     port,
-            "database": database,
-            "schema":   schema,
-            "username": username,
-            "auth":     auth,
-            "label":    f"SRC_{i}  {db_label}  {host}:{port}/{database}.{schema}",
+            "index":     i,
+            "prefix":    p,
+            "db_type":   db_type,
+            "db_label":  db_label,
+            "host":      host,
+            "port":      port,
+            "database":  database,
+            "schema":    schema,
+            "username":  username,
+            "auth":      auth,
+            "s3_output": s3_output,
+            "label":     f"SRC_{i}  {db_label}  {host}:{port}/{database}.{schema}",
         })
 
     # Fall back to legacy SOURCE_* if no SRC_N_* found

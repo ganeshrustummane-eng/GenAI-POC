@@ -618,9 +618,10 @@ class AthenaExtractor(BaseExtractor):
             conn.close()
 
     def extract_columns(self, schema: str, table: str, database: Optional[str] = None) -> List[ColumnMetadata]:
+        # Athena's INFORMATION_SCHEMA.COLUMNS only exposes a subset of standard columns —
+        # character_maximum_length, numeric_precision, numeric_scale, column_default are absent.
         sql = f"""
-            SELECT ordinal_position, column_name, data_type, is_nullable,
-                   character_maximum_length, numeric_precision, numeric_scale, column_default
+            SELECT ordinal_position, column_name, data_type, is_nullable
             FROM information_schema.columns
             WHERE table_schema = '{schema.lower()}' AND table_name = '{table.lower()}'
             ORDER BY ordinal_position
@@ -638,6 +639,25 @@ class AthenaExtractor(BaseExtractor):
         return columns
 
     def list_tables(self, schema: str) -> List[str]:
+        # Use Glue Data Catalog via boto3 — avoids Athena workgroup permission requirements.
+        try:
+            import boto3
+            kwargs = dict(region_name=self.region)
+            if self.access_key and self.secret_key:
+                kwargs["aws_access_key_id"]     = self.access_key
+                kwargs["aws_secret_access_key"] = self.secret_key
+            glue = boto3.client("glue", **kwargs)
+            paginator = glue.get_paginator("get_tables")
+            tables = []
+            for page in paginator.paginate(DatabaseName=schema or self.database):
+                tables.extend(t["Name"] for t in page.get("TableList", []))
+            return sorted(tables)
+        except ImportError:
+            pass
+        except Exception as e:
+            raise ExtractionError(f"Failed to list tables via Glue for '{schema}': {e}", e)
+
+        # Fallback: Athena SQL (requires workgroup execute permissions)
         sql = f"""
             SELECT table_name FROM information_schema.tables
             WHERE table_schema = '{schema.lower()}'
@@ -653,8 +673,21 @@ class AthenaExtractor(BaseExtractor):
         return [r["table_name"] for r in rows]
 
     def list_schemas(self) -> List[str]:
-        # Athena uses Glue databases as schemas; return the configured database as the schema.
-        return [self.database] if self.database else []
+        # Use Glue Data Catalog to list databases (= schemas for Athena).
+        try:
+            import boto3
+            kwargs = dict(region_name=self.region)
+            if self.access_key and self.secret_key:
+                kwargs["aws_access_key_id"]     = self.access_key
+                kwargs["aws_secret_access_key"] = self.secret_key
+            glue = boto3.client("glue", **kwargs)
+            paginator = glue.get_paginator("get_databases")
+            dbs = []
+            for page in paginator.paginate():
+                dbs.extend(d["Name"] for d in page.get("DatabaseList", []))
+            return sorted(dbs) if dbs else ([self.database] if self.database else [])
+        except Exception:
+            return [self.database] if self.database else []
 
     def detect_primary_key(self, schema: str, table: str) -> PrimaryKeyInfo:
         return PrimaryKeyInfo(table_name=table, columns=[], detected=False,
