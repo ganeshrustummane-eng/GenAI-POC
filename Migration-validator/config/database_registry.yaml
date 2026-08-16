@@ -1,0 +1,16 @@
+# Non-secret database and schema fallback metadata.
+# Credentials must remain in .env. Values here are used only when the matching
+# SRC_N_DATABASE/SRC_N_SCHEMA or Snowflake variables are missing.
+databases:
+  SRC_1:
+    database: fms
+    schema: public
+  SRC_2:
+    database: DevT5000
+    schema: dbo
+  SRC_3:
+    database: migration_validator_test
+    schema: main
+  SNOWFLAKE:
+    database: DEV_EDGE_BRONZE
+    schema: STOREDGE_FMS_PUBLIC

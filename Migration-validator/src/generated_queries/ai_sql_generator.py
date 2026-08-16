@@ -27,6 +27,7 @@ Environment Variables Required:
 
 import json
 import os
+import re
 from typing import List, Optional, Tuple
 from dataclasses import dataclass
 
@@ -144,7 +145,13 @@ class AISQLQueryGenerator:
                 extra_headers={"Api-Key": self.api_key},
             )
             raw = response.choices[0].message.content
-            return self._parse_response(raw, source_db_type)
+            result = self._parse_response(raw, source_db_type, mappings, query_type)
+            if result.warnings:
+                print("  [AISQLGenerator] AI response failed SQL checks — using fallback")
+                return self._fallback_query(
+                    schema, table, mappings, source_db_type, query_type, has_fivetran_active
+                )
+            return result
 
         except Exception as exc:
             print(f"  [AISQLGenerator] AI error: {exc} — using fallback query")
@@ -190,12 +197,21 @@ Your task: Generate database-specific SQL queries for validation between {source
 - NULL coalesce: COALESCE(CAST(column AS VARCHAR), '<<NULL>>')
 
 ## Critical Requirements:
-1. ALWAYS use database-specific syntax — never mix dialects
-2. ALL columns MUST have COALESCE(..., '<<NULL>>') wrapper
-3. Text casts MUST match database type (VARCHAR(MAX) for MSSQL, TEXT for PG, STRING for SF)
-4. Format functions MUST match database (FORMAT for MSSQL, TO_CHAR for PG, TO_VARCHAR for SF)
-5. Return ONLY the SQL query — no markdown, no explanations
-6. Test your syntax mentally before outputting
+1. ALWAYS use database-specific syntax — never mix dialects.
+2. Treat every source→target type pair as a compatibility decision; choose a cast
+    legal in the source dialect that produces a comparable value.
+3. Preserve numeric precision and scale before text conversion; use intermediate
+    conversions for types that cannot be cast directly.
+4. Normalize timezone semantics before formatting timestamps; do not silently drop offsets.
+5. Handle NULL, empty strings, booleans, JSON/JSONB, binary, UUID, date, numeric,
+    and character padding explicitly according to the source dialect.
+6. ALL normalized data-validation columns MUST have COALESCE(..., '<<NULL>>').
+7. Text casts MUST match the database type (VARCHAR(MAX) for MSSQL, TEXT for PG, STRING for SF).
+8. Format functions MUST match the database (FORMAT for MSSQL, TO_CHAR for PG, TO_VARCHAR for SF).
+9. Use commas between every SELECT expression and preserve requested aliases exactly.
+10. Include the target active-record filter when requested; never mix source and target syntax.
+11. Return ONLY the SQL query — no markdown, no explanation.
+12. Mentally validate the complete query as executable SQL before returning it.
 
 ## NULL Handling (CRITICAL):
 - Source query: COALESCE(CAST(expression AS <database_text_type>), '<<NULL>>')
@@ -236,12 +252,16 @@ Return plain SQL query only. No markdown, no comments, no explanations outside t
             "distinct_count": "SELECT distinct value count per column: COUNT(DISTINCT col)",
         }
 
+        compatibility = self._build_compatibility_matrix(mappings, source_db_type, "snowflake")
         return f"""Generate {source_db_type.upper()} SQL query for: {schema}.{table}
 
 Query Type: {query_descriptions.get(query_type, query_type)}
 
 Columns to process ({len(columns_json)} total):
 {json.dumps(columns_json, indent=2)}
+
+Source → target compatibility decisions:
+{compatibility}
 
 Requirements:
 1. Use {source_db_type.upper()}-specific syntax
@@ -254,6 +274,26 @@ Requirements:
 
 Generate the complete SELECT query now:
 """
+
+    def _build_compatibility_matrix(
+        self,
+        mappings: List[ColumnRuleMapping],
+        source_db_type: str,
+        target_db_type: str,
+    ) -> str:
+        """Give the model explicit per-column castability context."""
+        lines = []
+        for mapping in mappings:
+            if mapping.skip_validation:
+                continue
+            lines.append(
+                f"- {mapping.source_column} -> {mapping.target_column}: "
+                f"{mapping.source_type.upper()} -> {mapping.target_type.upper()}; "
+                f"rule={mapping.rule.rule_name}; "
+                f"source_text_cast={self._get_text_type(source_db_type)}; "
+                f"target_text_cast={self._get_text_type(target_db_type)}"
+            )
+        return "\n".join(lines) or "- No comparable columns"
 
     def _get_text_type(self, db_type: str) -> str:
         """Get the text data type for the database."""
@@ -295,7 +335,13 @@ Generate the complete SELECT query now:
             return "0"
         return "false"
 
-    def _parse_response(self, raw: str, db_type: str) -> AIGeneratedQuery:
+    def _parse_response(
+        self,
+        raw: str,
+        db_type: str,
+        mappings: Optional[List[ColumnRuleMapping]] = None,
+        query_type: str = "data_validation",
+    ) -> AIGeneratedQuery:
         """Parse AI response and extract the query."""
         # Strip markdown code fences if present
         cleaned = raw.strip()
@@ -308,10 +354,7 @@ Generate the complete SELECT query now:
                 cleaned = "\n".join(lines[1:])
             cleaned = cleaned.strip()
 
-        # Basic validation
-        warnings = []
-        if db_type.lower() in ("mssql", "sqlserver") and " AS TEXT" in cleaned.upper():
-            warnings.append("WARNING: Query contains 'AS TEXT' which is invalid for MS SQL Server")
+        warnings = self._validate_generated_query(cleaned, db_type, mappings or [], query_type)
 
         return AIGeneratedQuery(
             query=cleaned,
@@ -320,6 +363,44 @@ Generate the complete SELECT query now:
             confidence=0.95 if not warnings else 0.7,
             warnings=warnings,
         )
+
+    def _validate_generated_query(
+        self,
+        query: str,
+        db_type: str,
+        mappings: List[ColumnRuleMapping],
+        query_type: str,
+    ) -> List[str]:
+        """Reject unsafe or incomplete AI output before it reaches SQL files."""
+        warnings = []
+        upper = query.upper()
+        dialect = db_type.lower().replace("server", "")
+        if not re.search(r"\bSELECT\b", upper) or not re.search(r"\bFROM\b", upper):
+            warnings.append("AI response is not a complete SELECT query")
+        if dialect in {"mssql", "sqlserver"}:
+            forbidden = {
+                r"::\s*[A-Z_]": "PostgreSQL cast operator (::)",
+                r"\bTO_CHAR\s*\(": "PostgreSQL TO_CHAR",
+                r"\bAS\s+TEXT\b": "PostgreSQL TEXT cast",
+                r"\bJSONB\b": "PostgreSQL JSONB",
+                r"\bENCODE\s*\(": "PostgreSQL encode()",
+            }
+            for pattern, label in forbidden.items():
+                if re.search(pattern, upper):
+                    warnings.append(f"MSSQL query contains {label}")
+        if query_type == "data_validation":
+            if "<<NULL>>" not in query:
+                warnings.append("Data-validation query is missing the NULL placeholder")
+            for mapping in mappings:
+                if mapping.skip_validation:
+                    continue
+                alias = f"{mapping.source_column}_normalized".upper()
+                if alias not in upper:
+                    warnings.append(f"Missing required alias {mapping.source_column}_normalized")
+            # Detect adjacent SELECT function expressions without a comma.
+            if re.search(r"\)\s+\w+\s*\(", query, re.I):
+                warnings.append("SELECT expressions may be missing commas")
+        return warnings
 
     def _fallback_query(
         self,

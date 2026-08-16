@@ -1,4 +1,10 @@
-# ✅ FIXED: MS SQL Server "AS TEXT" Error + AI-Powered SQL Generation
+# ✅ AI-POWERED SQL GENERATION: MS SQL Server "AS TEXT" Error SOLVED
+
+## What This System Does
+
+The Migration Validator uses **AI exclusively** to generate database-specific validation queries. There is no rule-based fallback - AI models (GPT-4o, Claude, etc.) write all SQL queries to ensure optimal syntax for each database type.
+
+**Important**: `DIAL_API_KEY` is required for all query generation.
 
 ## What Was Fixed
 
@@ -34,18 +40,29 @@ All validation rules now support database-specific syntax:
 
 ---
 
-### **2. AI-Powered SQL Query Generation** 🤖✨
+### **2. AI-Powered SQL Query Generation** 🤖✨ (AI-Only System)
 
-Created a new AI-powered SQL generator that **dynamically writes queries** based on source and target database types.
+Created a new AI-powered SQL generator that **exclusively uses AI** to dynamically write queries based on source and target database types.
 
 **New File:** `src/generated_queries/ai_sql_generator.py`
 
 #### Features:
+- ✅ **AI-Only**: Uses GPT-4o/Claude/Gemini - no rule-based fallback
 - ✅ **Database-aware**: Generates MS SQL Server, PostgreSQL, Athena, or Snowflake queries
 - ✅ **Smart type conversion**: Knows that MSSQL needs `VARCHAR(MAX)`, not `TEXT`
-- ✅ **AI-driven**: Uses GPT-4o/Claude/Gemini to write optimal SQL
-- ✅ **Fallback mode**: Uses rule-based generation when AI unavailable
 - ✅ **Confidence scoring**: Warns when generated SQL might be incorrect
+- ✅ **Self-documenting**: AI explains every query generation decision
+- ✅ **Required**: `DIAL_API_KEY` must be configured for all operations
+
+#### Configuration Required:
+
+```bash
+# In .env file (REQUIRED)
+DIAL_API_KEY=your-epam-dial-api-key
+DIAL_API_BASE=https://ai-proxy.lab.epam.com
+DIAL_API_VERSION=2025-04-01-preview
+DIAL_MODEL=gpt-4o  # or gpt-4o-mini, claude-3-5-sonnet
+```
 
 #### How It Works:
 
@@ -117,21 +134,22 @@ DIAL_MODEL=gpt-4o  # or gpt-4o-mini, claude-3-5-sonnet
 SOURCE_TYPE=mssql  # mssql, postgresql, athena
 ```
 
-### **Automatic Mode (Recommended)**
+### **Automatic Mode (Recommended - Requires DIAL_API_KEY)**
 
-The validation pipeline **automatically detects** your source database type and generates correct SQL:
+The validation pipeline **uses AI exclusively** to detect your source database type and generate correct SQL:
 
 ```bash
 # Run validation - it will use MSSQL syntax automatically
 python src/validate_cli.py --config config/bronze/data_validation/addresses.yaml
 ```
 
-No code changes needed! The system:
+**Important**: This requires a valid `DIAL_API_KEY` in your `.env` file. The AI:
 1. Detects `SOURCE_TYPE=mssql` from `.env`
-2. Applies MS SQL Server rules automatically
+2. Uses AI to generate MS SQL Server-specific queries
 3. Generates queries with `VARCHAR(MAX)`, `FORMAT()`, `LTRIM/RTRIM`, etc.
+4. Provides confidence scores and warnings for quality assurance
 
-### **Manual Generation (For Custom Workflows)**
+### **Manual Generation (For Custom Workflows - Requires DIAL_API_KEY)**
 
 ```python
 from generated_queries.ai_sql_generator import AISQLQueryGenerator
@@ -146,8 +164,11 @@ source_cols = extractor.extract_columns(schema="dbo", table="Addresses")
 mapper = StaticRuleMapper()
 mappings = mapper.map_columns(source_cols, target_cols)
 
-# Generate AI-powered queries
+# Generate AI-powered queries (requires DIAL_API_KEY)
 generator = AISQLQueryGenerator(model="gpt-4o")
+
+if not generator._ai_active:
+    raise ValueError("DIAL_API_KEY is required. Please set it in your .env file.")
 result = generator.generate_validation_query(
     schema="dbo",
     table="Addresses",
@@ -157,8 +178,8 @@ result = generator.generate_validation_query(
 )
 
 print(result.query)
-print(f"Confidence: {result.confidence}")
-print(f"Warnings: {result.warnings}")
+print(f"Confidence: {result.confidence}")  # AI confidence score (0.0-1.0)
+print(f"Warnings: {result.warnings}")  # Database-specific warnings
 ```
 
 ---

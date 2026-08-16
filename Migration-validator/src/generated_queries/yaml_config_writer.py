@@ -22,7 +22,7 @@ tables:
         sourcequery: |
           SELECT col1_normalized, ... FROM ...;
         target_table_name: ...
-        targetcolumn: <FIRST_COLUMN>
+        pktargetcolumn: <FIRST_COLUMN>
         targetquery: |
           SELECT COL1_normalized, ... FROM ...;
 
@@ -55,7 +55,7 @@ tables:
 ────────────────────────────────────────────────────────────────
 
 Key design decisions:
-  - sourcecolumn / targetcolumn only on data_validation (not needed for aggregates)
+  - pksourcecolumn / pktargetcolumn only on data_validation (not needed for aggregates)
   - YAML literal block scalar (|) used for all multi-line queries
   - Query content is indented 10 spaces (YAML requires > 8 for nested block)
   - Only the generator header comment is stripped; all SELECT lines kept
@@ -320,6 +320,8 @@ class YAMLConfigWriter:
         ]
 
         for gq in suite.queries:
+            from dynamic_suite.sql_validator import validate_sql_pair
+            validate_sql_pair(gq.source_sql, gq.target_sql, source_db_type)
             key = (
                 gq.label.lower()
                 .replace(" ", "_")
@@ -461,8 +463,9 @@ def _build_data_yaml(
         "#",
         "# Validation blocks (row count is in bronze.yaml):",
         "#   data_validation           — normalised full-scan SELECT (all columns)",
-        "#   null_pct_validation       — NULL % per column",
-        "#   distinct_count_validation — distinct value counts per column",
+        "#",
+        "# Note: null_pct_validation and distinct_count_validation have been",
+        "# removed. Only data_validation and count_validation are used.",
         "#",
         "# Normalization rules applied automatically:",
         "#   - Boolean    : TRUE/FALSE -> '1'/'0'",
@@ -486,36 +489,14 @@ def _build_data_yaml(
         "      data_validation:",
         f"        source_table_name: {table_name_source}",
         f"        source: {source_db_type}",
-        f"        sourcecolumn: {source_column}",
+        f"        pksourcecolumn: {source_column}",
         "        sourcequery: |",
         data_source_yaml,
         f"        target_table_name: {table_name_target}",
         "        target: snowflake",
-        f"        targetcolumn: {target_column}",
+        f"        pktargetcolumn: {target_column}",
         "        targetquery: |",
         data_target_yaml,
-        "",
-        "      # ── ⑤ / ⑥ NULL % per column ──────────────────────────────────",
-        "      null_pct_validation:",
-        f"        source_table_name: {table_name_source}",
-        f"        source: {source_db_type}",
-        "        sourcequery: |",
-        null_pct_source_yaml,
-        f"        target_table_name: {table_name_target}",
-        "        target: snowflake",
-        "        targetquery: |",
-        null_pct_target_yaml,
-        "",
-        "      # ── ⑦ / ⑧ Distinct value counts per column ───────────────────",
-        "      distinct_count_validation:",
-        f"        source_table_name: {table_name_source}",
-        f"        source: {source_db_type}",
-        "        sourcequery: |",
-        distinct_source_yaml,
-        f"        target_table_name: {table_name_target}",
-        "        target: snowflake",
-        "        targetquery: |",
-        distinct_target_yaml,
         "",
     ]
 

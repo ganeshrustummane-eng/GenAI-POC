@@ -11,6 +11,6 @@ before allowing SQL and YAML generators to consume it.  This is the
           INVALID → raise PlanValidationError (never generate SQL)
 """
 
-from validation.plan_validator import PlanValidator, PlanValidationError
+from .plan_validator import PlanValidator, PlanValidationError
 
 __all__ = ["PlanValidator", "PlanValidationError"]

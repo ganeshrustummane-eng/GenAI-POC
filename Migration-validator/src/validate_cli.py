@@ -44,6 +44,7 @@ Usage
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -563,9 +564,8 @@ def cmd_generate(args):
     # ── Connection profile fast-path: --connection-profile <name> ────────────
     profile_name = getattr(args, "connection_profile", None)
     if profile_name:
-        rec = _resolve_connection_profile(profile_name)
-        if rec is None:
-            return
+        _warn("Connection profiles are disabled. Use credentials from .env.")
+        profile_name = None
 
     # ── Multi-table parameterized flow: --source N --tables t1,t2,... ────────
     tables_raw = getattr(args, "tables", None) or ""
@@ -651,6 +651,9 @@ def cmd_generate(args):
         else:
             sf_schema   = sf_schema   or os.getenv("SNOWFLAKE_SCHEMA",   "")
             sf_database = sf_database or os.getenv("SNOWFLAKE_DATABASE", "")
+
+    if not getattr(args, "exclude", None):
+        exclude_cols = _select_column_exclusions(rec, pg_schema, pg_table, exclude_cols)
 
     # ── Config summary ────────────────────────────────────────────────────────
     ai_status = (
@@ -1198,7 +1201,7 @@ def cmd_connections(args):
         _warn("No .env file found. Run:  python validate_cli.py setup")
         return
 
-    registry = print_connection_registry(env_path)
+    registry = [_apply_database_registry(record) for record in print_connection_registry(env_path)]
     if not registry:
         _warn("No source connections found in .env. Run:  python validate_cli.py setup")
         return
@@ -1309,7 +1312,7 @@ def cmd_list_tables(args):
     _head("🔍  AVAILABLE TABLES  (all configured connections)")
 
     env_path = _SRC_DIR.parent / ".env"
-    registry = print_connection_registry(env_path)
+    registry = [_apply_database_registry(record) for record in print_connection_registry(env_path)]
 
     name_filter = getattr(args, "filter", None) or ""
 
@@ -1430,11 +1433,6 @@ def cmd_interactive():
     print(_env_status_block())
     print(f"\n  {_C.DIM}Rule Book : {stats['base_rules']} base + {stats['learned_rules']} learned = {stats['total_rules']} total rules{_C.RESET}")
 
-    saved_profiles = _profile_mgr.list_profiles()
-    profile_hint = (
-        f"  {_C.DIM}({len(saved_profiles)} saved: {', '.join(saved_profiles[:3])}{'...' if len(saved_profiles) > 3 else ''}){_C.RESET}"
-        if saved_profiles else ""
-    )
     print(f"""
   {_C.BOLD}What would you like to do?{_C.RESET}
 
@@ -1451,7 +1449,6 @@ def cmd_interactive():
     {_C.CYAN}[5]{_C.RESET}  View rule book
     {_C.CYAN}[6]{_C.RESET}  Add custom rule
     {_C.CYAN}[7]{_C.RESET}  List available AI models
-    {_C.CYAN}[8]{_C.RESET}  Connection profiles{profile_hint}
     {_C.CYAN}[9]{_C.RESET}  Execute YAML        ← run source + target queries from a saved YAML, see pass/fail
 
     {_C.DIM}[q]{_C.RESET}  Quit
@@ -1480,8 +1477,6 @@ def cmd_interactive():
         cmd_add_rule(ns)
     elif choice in ("7", "list-models", "models"):
         _list_models_cmd()
-    elif choice in ("8", "profiles", "profile"):
-        cmd_profiles(ns)
     elif choice in ("9", "execute", "run-yaml", "exec"):
         cmd_execute_yaml(ns)
     elif choice in ("q", "quit", "exit"):
@@ -1824,9 +1819,26 @@ def _get_connection_by_index(index: int) -> Optional[dict]:
     registry = print_connection_registry(env_path)
     matches = [r for r in registry if r["index"] == index]
     if matches:
-        return matches[0]
+        return _apply_database_registry(matches[0])
     _err(f"No connection found for SRC_{index} in .env. Run: python validate_cli.py connections")
     return None
+
+
+def _apply_database_registry(record: dict) -> dict:
+    """Fill missing database/schema metadata without loading credentials."""
+    import yaml
+
+    fallback_path = _SRC_DIR.parent / "config" / "database_registry.yaml"
+    try:
+        with open(fallback_path, encoding="utf-8") as handle:
+            fallback = yaml.safe_load(handle) or {}
+        key = record.get("prefix", f"SRC_{record.get('index', 1)}").rstrip("_")
+        metadata = fallback.get("databases", {}).get(key, {})
+        record["database"] = record.get("database") or metadata.get("database", "")
+        record["schema"] = record.get("schema") or metadata.get("schema", "")
+    except (OSError, yaml.YAMLError):
+        pass
+    return record
 
 
 def _override_source_env(rec: dict) -> None:
@@ -1864,6 +1876,101 @@ def _make_source_extractor(rec: dict):
         auth=rec.get("auth", ""),
         s3_output=rec.get("s3_output", ""),
     )
+
+
+def _resolve_yaml_source(source_type: str, current: dict) -> dict:
+    """Resolve a YAML block to the configured source matching its DB type."""
+    wanted = _normalize_db_type(source_type or current.get("type", "postgresql"))
+    try:
+        from setup_wizard import print_connection_registry
+        registry = [_apply_database_registry(record) for record in print_connection_registry(_SRC_DIR.parent / ".env")]
+        for rec in registry:
+            if _normalize_db_type(rec.get("db_type", "")) == wanted:
+                return {
+                    "type": wanted,
+                    "host": rec.get("host", ""),
+                    "port": rec.get("port", "5432"),
+                    "database": rec.get("database", ""),
+                    "username": rec.get("username", ""),
+                    "password": os.getenv(f"{rec.get('prefix', '')}PASSWORD", ""),
+                    "schema": rec.get("schema", "public"),
+                    "auth": rec.get("auth", ""),
+                }
+    except Exception:
+        pass
+    if _normalize_db_type(current.get("type", "")) == wanted:
+        return current
+    return {**current, "type": wanted}
+
+
+def _select_column_exclusions(rec: dict, schema: str, table: str, initial=None) -> list:
+    """Interactively select source columns to exclude for one table."""
+    selected = list(initial or [])
+    try:
+        extractor = _make_source_extractor(rec)
+        columns = extractor.extract_columns(schema, table)
+        names = [getattr(column, "column_name", str(column)) for column in columns]
+    except Exception as exc:
+        _warn(f"Could not load columns for {table}: {exc}")
+        raw = _prompt("Additional columns to exclude (comma-separated, or Enter for none)", "")
+        return selected + [name.strip() for name in raw.split(",") if name.strip()]
+
+    static = {name.lower() for name in STATIC_EXCLUDE_COLUMNS}
+    print(f"\n  {_C.BOLD}Columns for {table}:{_C.RESET}")
+    for index, name in enumerate(names, 1):
+        marker = f" {_C.YELLOW}[auto]{_C.RESET}" if name.lower() in static else ""
+        print(f"    {_C.CYAN}[{index:>2}]{_C.RESET} {name}{marker}")
+    print(f"    {_C.DIM}Enter column numbers or names separated by commas; Enter keeps automatic exclusions.{_C.RESET}")
+    raw = input("  Exclude columns: ").strip()
+    if not raw:
+        return selected
+
+    by_lower = {name.lower(): name for name in names}
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            index = int(token)
+            if 1 <= index <= len(names):
+                selected.append(names[index - 1])
+            else:
+                _warn(f"Column number {index} is out of range.")
+        except ValueError:
+            selected.append(by_lower.get(token.lower(), token))
+
+    deduped = []
+    seen = set()
+    for name in selected:
+        if name.lower() not in seen:
+            seen.add(name.lower())
+            deduped.append(name)
+    return deduped
+
+
+def _canonical_validation_value(column_name: str, value):
+    """Normalize equivalent JSON/HStore representations before comparison."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    lowered_name = column_name.lower()
+    if "json" in lowered_name:
+        try:
+            import json
+            return json.dumps(json.loads(text), sort_keys=True, separators=(",", ":"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return text
+    if "hstore" in lowered_name:
+        try:
+            import json
+            if text.startswith("{"):
+                return json.dumps(json.loads(text), sort_keys=True, separators=(",", ":"))
+            pairs = re.findall(r'"([^"]+)"\s*=>\s*"([^"]*)"', text)
+            if pairs:
+                return json.dumps(dict(pairs), sort_keys=True, separators=(",", ":"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+    return text
 
 
 def _run_parameterized_tables(args, current_model: str, exclude_cols: list) -> None:
@@ -2329,7 +2436,8 @@ def cmd_multi_db(args):
     profile_name  = getattr(args, "connection_profile", None)
 
     if profile_name:
-        rec = _resolve_connection_profile(profile_name)
+        _warn("Connection profiles are disabled. Use credentials from .env.")
+        rec = _get_connection_by_index(source_index) if source_index is not None else _pick_source_connection()
     elif source_index is not None:
         rec = _get_connection_by_index(source_index)
     else:
@@ -2367,19 +2475,20 @@ def cmd_multi_db(args):
 
     pg_database = rec["database"]
 
-    # ── D: Pick Snowflake target database + schema ────────────────────────────
+    # ── D: Select columns to exclude per source table ─────────────────────────
+    exclude_raw = getattr(args, "exclude", None) or ""
+    base_exclusions = list(STATIC_EXCLUDE_COLUMNS)
+    base_exclusions.extend(c.strip() for c in exclude_raw.split(",") if c.strip())
+    table_exclusions = {
+        table: _select_column_exclusions(rec, schema, table, base_exclusions)
+        for table in source_tables
+    }
+
+    # ── E: Pick Snowflake target database + schema ────────────────────────────
     sf_database = getattr(args, "sf_database", None) or ""
     sf_schema   = getattr(args, "sf_schema",   None) or ""
     if not sf_database or not sf_schema:
         sf_database, sf_schema = _pick_snowflake_target()
-
-    # ── E: Column exclusions ──────────────────────────────────────────────────
-    exclude_raw  = getattr(args, "exclude", None) or ""
-    if not exclude_raw:
-        exclude_raw = _prompt(
-            "Columns to exclude (comma-separated, or Enter for none)", ""
-        )
-    exclude_cols = [c.strip() for c in exclude_raw.split(",") if c.strip()]
 
     # ── F: Snowflake table auto-match ─────────────────────────────────────────
     _head("SNOWFLAKE TABLE MATCHING")
@@ -2452,8 +2561,8 @@ def cmd_multi_db(args):
     print(f"    Target      : {_C.CYAN}Snowflake  {sf_database}.{sf_schema}{_C.RESET}")
     print(f"    AI Mode     : {ai_status}")
     print(f"    Model       : {_C.CYAN}{current_model}{_C.RESET}")
-    if exclude_cols:
-        print(f"    Excluded    : {_C.YELLOW}{', '.join(exclude_cols)}{_C.RESET}")
+    if any(table_exclusions.values()):
+        print(f"    Exclusions  : {_C.YELLOW}selected per table{_C.RESET}")
     print(f"\n    {_C.BOLD}Tables ({len(table_pairs)}):{_C.RESET}")
     for src, sf in table_pairs:
         print(f"      {_C.GREEN}{src:<30}{_C.RESET}  →  {_C.CYAN}{sf}{_C.RESET}")
@@ -2488,7 +2597,7 @@ def cmd_multi_db(args):
                 sf_table=sf_table,
                 sf_database=sf_database,
                 pg_database=pg_database,
-                exclude_columns=exclude_cols or None,
+                exclude_columns=table_exclusions.get(src_table) or None,
             )
             results.append((src_table, sf_table, result))
             succeeded += 1
@@ -2629,66 +2738,40 @@ def cmd_execute_yaml(args):
         _err("Please enter a number.")
         return
 
-    # ── Step 3: credentials — profile or current env ──────────────────────────
-    profiles = _profile_mgr.list_profiles()
-    print(f"\n  {_C.BOLD}Connection credentials:{_C.RESET}\n")
-    print(f"    {_C.CYAN}[0]{_C.RESET}  Use current .env settings")
-    for i, pname in enumerate(profiles, 1):
-        p = _profile_mgr.get_profile(pname)
-        sf  = p.get("snowflake", {}) if p else {}
-        src = p.get("source", {}) if p else {}
-        print(f"    {_C.CYAN}[{i}]{_C.RESET}  Profile: {_C.YELLOW}{pname}{_C.RESET}"
-              f"  {_C.DIM}({src.get('host','')} → {sf.get('database','')}.{sf.get('schema','')}){_C.RESET}")
-    print()
+    # ── Step 3: credentials — always from .env ───────────────────────────────
+    _dim("Using .env credentials.")
+    src_type = os.getenv("SOURCE_TYPE", "postgresql")
+    src_host = os.getenv("SOURCE_HOST", "localhost")
+    src_port = int(os.getenv("SOURCE_PORT", "5432"))
+    src_db = os.getenv("SOURCE_DATABASE", "")
+    src_user = os.getenv("SOURCE_USERNAME", "")
+    src_pass = os.getenv("SOURCE_PASSWORD", "")
+    src_schema = os.getenv("SOURCE_SCHEMA", "public")
+    sf_account = os.getenv("SNOWFLAKE_ACCOUNT", "")
+    sf_db = os.getenv("SNOWFLAKE_DATABASE", "")
+    sf_user = os.getenv("SNOWFLAKE_USERNAME", "")
+    sf_pass = os.getenv("SNOWFLAKE_PASSWORD", "")
+    sf_wh = os.getenv("SNOWFLAKE_WAREHOUSE", "")
+    sf_role = os.getenv("SNOWFLAKE_ROLE", "")
+    mssql_auth = os.getenv("MSSQL_AUTH", "")
 
-    raw3 = input(f"  Select credentials [0–{len(profiles)}]: ").strip()
-    try:
-        cred_idx = int(raw3)
-    except ValueError:
-        cred_idx = 0
+    metadata = _apply_database_registry({"prefix": "SRC_1_", "index": 1})
+    src_db = src_db or metadata.get("database", "")
+    src_schema = src_schema or metadata.get("schema", "public")
+    sf_metadata = _apply_database_registry({"prefix": "SNOWFLAKE_", "index": "SNOWFLAKE"})
+    sf_db = sf_db or sf_metadata.get("database", "")
+    sf_schema = os.getenv("SNOWFLAKE_SCHEMA", "") or sf_metadata.get("schema", "")
 
-    if cred_idx == 0:
-        _dim("Using current .env credentials.")
-        src_type = os.getenv("SOURCE_TYPE", "postgresql")
-        src_host = os.getenv("SOURCE_HOST", "localhost")
-        src_port = int(os.getenv("SOURCE_PORT", "5432"))
-        src_db   = os.getenv("SOURCE_DATABASE", "")
-        src_user = os.getenv("SOURCE_USERNAME", "")
-        src_pass = os.getenv("SOURCE_PASSWORD", "")
-        src_schema = os.getenv("SOURCE_SCHEMA", "public")
-        sf_account  = os.getenv("SNOWFLAKE_ACCOUNT", "")
-        sf_db       = os.getenv("SNOWFLAKE_DATABASE", "")
-        sf_user     = os.getenv("SNOWFLAKE_USERNAME", "")
-        sf_pass     = os.getenv("SNOWFLAKE_PASSWORD", "")
-        sf_wh       = os.getenv("SNOWFLAKE_WAREHOUSE", "")
-        sf_role     = os.getenv("SNOWFLAKE_ROLE", "")
-        mssql_auth  = os.getenv("MSSQL_AUTH", "")
-    elif 1 <= cred_idx <= len(profiles):
-        profile_name = profiles[cred_idx - 1]
-        profile = _profile_mgr.get_profile(profile_name)
-        if not profile:
-            _err(f"Profile '{profile_name}' could not be loaded.")
-            return
-        _ok(f"Using profile: {profile_name}")
-        src = profile.get("source", {})
-        sf  = profile.get("snowflake", {})
-        src_type   = _normalize_db_type(src.get("db_type", "postgresql"))
-        src_host   = src.get("host", "localhost")
-        src_port   = int(src.get("port", 5432))
-        src_db     = src.get("database", "")
-        src_user   = src.get("username", "")
-        src_pass   = src.get("password", "")
-        src_schema = src.get("schema", "public")
-        mssql_auth = src.get("auth", "")
-        sf_account = sf.get("account", "")
-        sf_db      = sf.get("database", "")
-        sf_user    = sf.get("username", "")
-        sf_pass    = sf.get("password", "")
-        sf_wh      = sf.get("warehouse", "")
-        sf_role    = sf.get("role", "")
-    else:
-        _err("Invalid selection.")
-        return
+    current_source = {
+        "type": src_type,
+        "host": src_host,
+        "port": src_port,
+        "database": src_db,
+        "username": src_user,
+        "password": src_pass,
+        "schema": src_schema,
+        "auth": mssql_auth,
+    }
 
     # ── Step 4: pick validation type to run ──────────────────────────────────
     # Discover all validation block names from the first table entry
@@ -2738,11 +2821,25 @@ def cmd_execute_yaml(args):
             src_label = vdata.get("source", "source")
             tgt_label = vdata.get("target", "snowflake")
 
+            # A single YAML may contain PostgreSQL and MSSQL blocks. Resolve
+            # the source independently for each block instead of reusing the
+            # connection selected for the first block.
+            block_source = _resolve_yaml_source(src_label, current_source)
+            src_type = block_source["type"]
+            src_host = block_source["host"]
+            src_port = int(block_source["port"])
+            src_db = block_source["database"]
+            src_user = block_source["username"]
+            src_pass = block_source["password"]
+            src_schema = block_source["schema"]
+            mssql_auth = block_source["auth"]
+
             print(f"\n    {_C.DIM}── {vname} ─────────────────────────────────────────{_C.RESET}")
 
             # Run source query
             src_result = None
             src_error  = None
+            src_columns = []
             try:
                 src_type_norm = _normalize_db_type(src_type)
                 if src_type_norm == "mssql":
@@ -2757,6 +2854,7 @@ def cmd_execute_yaml(args):
                     conn = pyodbc.connect(cs, timeout=30)
                     cur = conn.cursor()
                     cur.execute(src_sql)
+                    src_columns = [description[0] for description in cur.description or []]
                     rows = cur.fetchall()
                     conn.close()
                     src_result = rows
@@ -2768,6 +2866,7 @@ def cmd_execute_yaml(args):
                     )
                     cur = conn.cursor()
                     cur.execute(src_sql)
+                    src_columns = [description[0] for description in cur.description or []]
                     rows = cur.fetchall()
                     conn.close()
                     src_result = rows
@@ -2777,6 +2876,7 @@ def cmd_execute_yaml(args):
             # Run target Snowflake query
             tgt_result = None
             tgt_error  = None
+            tgt_columns = []
             try:
                 import snowflake.connector
                 sf_params = dict(account=sf_account, user=sf_user, password=sf_pass,
@@ -2788,6 +2888,7 @@ def cmd_execute_yaml(args):
                 sf_conn = snowflake.connector.connect(**sf_params)
                 sf_cur  = sf_conn.cursor()
                 sf_cur.execute(tgt_sql)
+                tgt_columns = [description[0] for description in sf_cur.description or []]
                 rows = sf_cur.fetchall()
                 sf_conn.close()
                 tgt_result = rows
@@ -2828,13 +2929,50 @@ def cmd_execute_yaml(args):
                     diff = abs(int(tv or 0) - int(sv or 0)) if sv is not None and tv is not None else "?"
                     status = f"{_C.RED}✗ FAIL{_C.RESET}  (source={sv}, target={tv}, diff={diff})"
             else:
-                row_match = (src_result == tgt_result) if (src_result and tgt_result) else False
+                # Database engines do not guarantee row order without ORDER BY.
+                # Compare normalized data validations in a deterministic order.
+                def _canonical_row(row, columns):
+                    return tuple(
+                        _canonical_validation_value(name, value)
+                        for name, value in zip(columns, row)
+                    )
+
+                comparable_source = sorted(
+                    (_canonical_row(row, src_columns) for row in src_result),
+                    key=str,
+                ) if src_result else []
+                comparable_target = sorted(
+                    (_canonical_row(row, tgt_columns) for row in tgt_result),
+                    key=str,
+                ) if tgt_result else []
+                row_match = (comparable_source == comparable_target) if (src_result is not None and tgt_result is not None) else False
                 if row_match:
                     total_passed += 1
-                    status = f"{_C.GREEN}✓ PASS{_C.RESET}  ({len(src_result)} rows match)"
+                    status = f"{_C.GREEN}✓ PASS{_C.RESET}  ({len(comparable_source)} rows match, order-independent)"
                 elif src_result and tgt_result:
                     total_failed += 1
-                    status = f"{_C.RED}✗ FAIL{_C.RESET}  (source={len(src_result)} rows, target={len(tgt_result)} rows)"
+                    mismatch_note = ""
+                    if vname.lower() == "data_validation" and src_columns and tgt_columns:
+                        source_by_key = {str(row[0]): row for row in src_result}
+                        target_by_key = {str(row[0]): row for row in tgt_result}
+                        mismatches = []
+                        for key in sorted(set(source_by_key) | set(target_by_key)):
+                            source_row = source_by_key.get(key)
+                            target_row = target_by_key.get(key)
+                            if source_row is None or target_row is None:
+                                mismatches.append(f"key={key}: missing on {'source' if source_row is None else 'target'}")
+                                continue
+                            differences = [
+                                name for name, source_value, target_value in zip(
+                                    src_columns, source_row, target_row
+                                ) if _canonical_validation_value(name, source_value)
+                                != _canonical_validation_value(name, target_value)
+                            ]
+                            if differences:
+                                mismatches.append(f"key={key}: {', '.join(differences[:4])}")
+                        if mismatches:
+                            mismatch_note = f"; mismatches={len(mismatches)} ({' | '.join(mismatches[:3])})"
+                    status = f"{_C.RED}✗ FAIL{_C.RESET}  (source={len(src_result)} rows, target={len(tgt_result)} rows{mismatch_note})"
                 else:
                     total_errors += 1
                     status = f"{_C.YELLOW}? SKIP{_C.RESET}  (no data to compare)"

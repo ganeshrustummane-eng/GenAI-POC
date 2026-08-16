@@ -21,9 +21,21 @@ from typing import List, Optional, Dict
 from sql_extractor.extractors import ColumnMetadata
 from rules import get_rule_for_type, BaseValidationRule
 
+# Import exclusion manager (centralized exclusion logic)
+try:
+    from exclusions import exclusion_manager
+    EXCLUSION_MANAGER_AVAILABLE = True
+except ImportError:
+    EXCLUSION_MANAGER_AVAILABLE = False
+    print("  [WARN] exclusion_manager not available — using legacy hardcoded exclusions")
 
-# Fivetran metadata column prefixes — skip these in validation
+
+# ── Legacy Skip Logic (Deprecated — Use exclusions.yaml Instead) ───────────
+# These are kept for backward compatibility but exclusion_manager takes priority
 _FIVETRAN_SKIP_PREFIXES = ("_FIVETRAN_",)
+_SKIP_COLUMNS = {
+    "UTS", "uts", "uTS",  # SQL Server rowversion — now in exclusions.yaml
+}
 
 
 @dataclass
@@ -89,6 +101,8 @@ class StaticRuleMapper:
         source_columns: List[ColumnMetadata],
         target_columns: List[ColumnMetadata],
         primary_key_hints: Optional[List[str]] = None,
+        source_table_name: str = "",
+        source_db_type: str = "postgresql",
     ) -> List[ColumnRuleMapping]:
         """
         Map source columns to target columns and assign validation rules.
@@ -97,6 +111,8 @@ class StaticRuleMapper:
             source_columns    : PostgreSQL column metadata list
             target_columns    : Snowflake column metadata list
             primary_key_hints : Optional list of column names that are PKs
+            source_table_name : Source table name (for exclusion rules)
+            source_db_type    : Source database type (postgresql, mssql, athena)
 
         Returns:
             List[ColumnRuleMapping] — one entry per matched column pair.
@@ -110,8 +126,49 @@ class StaticRuleMapper:
         mappings: List[ColumnRuleMapping] = []
 
         for src_col in source_columns:
+            # ── NEW: Check exclusion manager first (centralized exclusion logic) ──
+            if EXCLUSION_MANAGER_AVAILABLE:
+                exclusion_decision = exclusion_manager.should_exclude(
+                    column_name=src_col.column_name,
+                    source_table=source_table_name,
+                    source_type=src_col.data_type,
+                    target_type="",  # Will be checked after matching
+                    source_database=source_db_type,
+                    applies_to="source",
+                )
+
+                if exclusion_decision.excluded:
+                    # Add to results with skip flag for reporting
+                    result.append(
+                        ColumnRuleMapping(
+                            source_column=src_col.column_name,
+                            target_column="",
+                            source_type=src_col.data_type,
+                            target_type="",
+                            rule=get_rule_for_type("text", "TEXT", source_db_type),  # Dummy rule
+                            is_primary_key=False,
+                            skip_validation=True,
+                            skip_reason=f"Excluded: {exclusion_decision.reason} ({exclusion_decision.rule_type})",
+                            matched_by="exclusion",
+                        )
+                    )
+                    print(
+                        f"  [EXCLUDED] {src_col.column_name} — {exclusion_decision.reason} "
+                        f"(rule: {exclusion_decision.rule_type})"
+                    )
+                    continue
+
+            # ── LEGACY: Backward compatibility checks (will be removed in v2.0) ──
             # Skip Fivetran internal metadata columns
             if _is_fivetran_column(src_col.column_name):
+                continue
+
+            # Skip known problematic columns (legacy hardcoded list)
+            if _is_skip_column(src_col.column_name):
+                print(
+                    f"  [INFO] Source column '{src_col.column_name}' "
+                    f"is in legacy skip list — consider moving to exclusions.yaml"
+                )
                 continue
 
             # Try to find matching target column by name
@@ -173,6 +230,11 @@ def _is_fivetran_column(column_name: str) -> bool:
     """Returns True if the column is a Fivetran internal metadata column."""
     upper = column_name.upper()
     return any(upper.startswith(prefix) for prefix in _FIVETRAN_SKIP_PREFIXES)
+
+
+def _is_skip_column(column_name: str) -> bool:
+    """Returns True if the column is in the excluded columns list."""
+    return column_name.upper() in {col.upper() for col in _SKIP_COLUMNS}
 
 
 def _is_likely_pk(column_name: str, data_type: str) -> bool:

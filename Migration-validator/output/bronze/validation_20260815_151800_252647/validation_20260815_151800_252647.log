@@ -1,0 +1,12 @@
+2026-08-15 15:18:00,256 | INFO | src.validation.validation_executor | validation_executor.py:93 | 
+============================================================
+2026-08-15 15:18:00,257 | INFO | src.validation.validation_executor | validation_executor.py:94 | Executing data_validation...
+2026-08-15 15:18:00,257 | INFO | src.validation.validation_executor | validation_executor.py:95 | ============================================================
+2026-08-15 15:18:07,134 | INFO | src.validation.validation_executor | validation_executor.py:158 | 
+============================================================
+2026-08-15 15:18:07,134 | INFO | src.validation.validation_executor | validation_executor.py:159 | VALIDATION BATCH SUMMARY
+2026-08-15 15:18:07,134 | INFO | src.validation.validation_executor | validation_executor.py:160 | ============================================================
+2026-08-15 15:18:07,134 | INFO | src.validation.validation_executor | validation_executor.py:166 | Total: 2 | PASS: 1 | FAIL: 1 | ERROR: 0
+2026-08-15 15:18:07,134 | INFO | src.validation.validation_executor | validation_executor.py:167 | Run ID: 20260815_151800_252647
+2026-08-15 15:18:07,134 | INFO | src.validation.validation_executor | validation_executor.py:168 | Logs: C:\EPAM-Personal\Migration-validator\output\bronze\validation_20260815_151800_252647
+2026-08-15 15:18:07,135 | INFO | src.validation.validation_executor | validation_executor.py:169 | Output: C:\EPAM-Personal\Migration-validator/output/bronze/validation_20260815_151800_252647

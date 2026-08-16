@@ -50,8 +50,8 @@ from batch.config_parser import BatchConfig, TablePairConfig
 from batch.manifest_writer import ManifestWriter, TableResult
 
 
-# Batch run output root (src/runs/) — stores manifests and plan JSONs
-_OUTPUT_ROOT = Path(__file__).parent.parent / "runs"
+# Batch run output root (repository/output/) — stores manifests and plan JSONs
+_OUTPUT_ROOT = Path(__file__).resolve().parents[2] / "output" / "batch"
 
 
 class BatchRunner:
@@ -454,6 +454,7 @@ class BatchRunner:
                 sf_table=pair.target_table,
                 has_fivetran_active=has_fivetran,
                 active_mappings=rule_mappings,
+                source_db_type=src_cfg.db_type,
                 use_ai_recommendations=bool(dial_key),
                 generated_by=plan.generated_by,
                 model_used=plan.model_used,

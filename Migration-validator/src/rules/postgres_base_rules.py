@@ -247,6 +247,7 @@ class IntegerRule(BaseValidationRule):
 
     def _pg_expression(self, col: str) -> str: return f"CAST({col} AS TEXT)"
     def _sf_expression(self, col: str) -> str: return f"CAST({col} AS STRING)"
+    def _ms_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR(MAX))"
 
 
 DEFAULT_DECIMAL_PLACES: int = 2

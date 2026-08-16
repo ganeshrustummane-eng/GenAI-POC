@@ -57,6 +57,7 @@ from profiling.schema_profiler import ColumnGroup, ColumnProfile, TableProfile
 from profiling.validation_rule_engine import ValidationType, ValidationRequirement
 from profiling.ai_recommendation import AIRecommendation
 from dynamic_suite.validation_suite import GeneratedQuery
+from dynamic_suite.sql_validator import validate_sql_pair
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +90,7 @@ class QueryOptimizer:
         sf_full: str,
         fivetran_active: bool,
         active_mappings: Optional[list] = None,
+        source_db_type: str = "postgresql",
     ) -> List[GeneratedQuery]:
         """
         Generate the minimal set of SQL queries for the given requirements.
@@ -105,6 +107,11 @@ class QueryOptimizer:
         Returns:
             List[GeneratedQuery] in display order (baseline first, conditional second)
         """
+        source_db_type = source_db_type.lower().strip()
+        if source_db_type in {"sqlserver", "sql_server", "mssqlserver"}:
+            source_db_type = "mssql"
+        elif source_db_type in {"postgres", "pg"}:
+            source_db_type = "postgresql"
         sf_where = " WHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else ""
         pg_full  = f"{source_schema}.{source_table}"
         queries: List[GeneratedQuery] = []
@@ -138,7 +145,7 @@ class QueryOptimizer:
         if ValidationType.DATA_VALIDATION in req_types:
             req = req_by_type[ValidationType.DATA_VALIDATION]
             src_sql, tgt_sql = self._data_validation_sql(
-                pg_full, sf_full, sf_where, active_mappings
+                pg_full, sf_full, sf_where, active_mappings, source_db_type
             )
             queries.append(GeneratedQuery(
                 requirement=req,
@@ -163,12 +170,11 @@ class QueryOptimizer:
                 ValidationType.DISTINCT_COUNT,
                 ValidationType.MIN_MAX,
                 ValidationType.SUM,
-                ValidationType.VALUE_DIST,
             }
         ]
         if aggregate_reqs:
             src_agg, tgt_agg, agg_label, agg_note = self._combined_aggregate_sql(
-                aggregate_reqs, pg_full, sf_full, sf_where, requirements
+                aggregate_reqs, pg_full, sf_full, sf_where, requirements, source_db_type
             )
             # Determine baseline or conditional
             is_base = all(not r.is_conditional for r in aggregate_reqs)
@@ -181,6 +187,24 @@ class QueryOptimizer:
                 query_number="⑤–⑫ combined",
                 is_baseline=is_base,
             ))
+
+        # VALUE_DIST is a result set, not a scalar aggregate. Keep it as a
+        # separate GROUP BY query rather than claiming it is in the aggregate.
+        value_dist_reqs = [r for r in requirements if r.validation_type == ValidationType.VALUE_DIST]
+        for req in value_dist_reqs:
+            for column in req.columns:
+                src_dist, tgt_dist = self._value_distribution_sql(
+                    column, pg_full, sf_full, sf_where, source_db_type
+                )
+                queries.append(GeneratedQuery(
+                    requirement=req,
+                    label=f"Value Distribution ({column.column_name})",
+                    source_sql=src_dist,
+                    target_sql=tgt_dist,
+                    comparison_note="Compare value_count by value; NULL is represented explicitly.",
+                    query_number="VALUE_DIST",
+                    is_baseline=req.is_conditional is False,
+                ))
 
         # ── ⑬ / ⑭ Duplicate Check ────────────────────────────────────────
         if ValidationType.DUPLICATE_CHECK in req_types:
@@ -211,6 +235,7 @@ class QueryOptimizer:
         sf_full: str,
         sf_where: str,
         active_mappings: Optional[list],
+        source_db_type: str,
     ) -> Tuple[str, str]:
         """
         Build the normalised SELECT queries (③ and ④).
@@ -237,7 +262,10 @@ class QueryOptimizer:
         for m in active_mappings:
             if m.skip_validation:
                 continue
-            src_expr = m.rule.apply_postgresql(
+            apply_source = getattr(m.rule, f"apply_{source_db_type.lower()}", None)
+            if apply_source is None:
+                raise ValueError(f"Unsupported source dialect: {source_db_type}")
+            src_expr = apply_source(
                 m.source_column, alias=f"{m.source_column}_normalized"
             )
             tgt_expr = m.rule.apply_snowflake(
@@ -267,6 +295,7 @@ class QueryOptimizer:
         sf_full: str,
         sf_where: str,
         all_requirements: List[ValidationRequirement],
+        source_db_type: str,
     ) -> Tuple[str, str, str, str]:
         """
         Build the single combined aggregate SELECT for source and target.
@@ -313,7 +342,7 @@ class QueryOptimizer:
             sc, tc = src_col(c), tgt_col(c)
             # json has no equality operator in PG; cast to jsonb for DISTINCT.
             if getattr(c, "source_type", "").lower() in _JSON_TYPES:
-                sc = f"{sc}::jsonb"
+                sc = f"CAST({sc} AS JSONB)" if source_db_type.lower() == "postgresql" else sc
             src_parts.append(
                 f"COUNT(DISTINCT {sc}) AS {c.column_name}_distinct_count"
             )
@@ -337,18 +366,6 @@ class QueryOptimizer:
             src_parts.append(f"SUM({sc}) AS {c.column_name}_sum")
             tgt_parts.append(f"SUM({tc}) AS {c.column_name}_sum")
 
-        # ── VALUE DISTRIBUTION (via COUNT(DISTINCT) already covers enum cols) ─
-        # Value distribution for STATUS/ENUM: group-by query is separate
-        # We add distinct count for them here as a proxy
-        dist_enum_cols = column_sets.get(ValidationType.VALUE_DIST, [])
-        for c in dist_enum_cols:
-            sc, tc = src_col(c), tgt_col(c)
-            alias = f"{c.column_name}_distinct_values"
-            # Only add if not already in distinct_count list
-            if c not in dist_cols:
-                src_parts.append(f"COUNT(DISTINCT {sc}) AS {alias}")
-                tgt_parts.append(f"COUNT(DISTINCT {tc}) AS {alias}")
-
         # ── What types are included → build label ──────────────────────────
         type_labels = []
         if ValidationType.NULL_PCT in req_types_present:
@@ -359,18 +376,16 @@ class QueryOptimizer:
             type_labels.append("MIN/MAX")
         if ValidationType.SUM in req_types_present:
             type_labels.append("SUM")
-        if ValidationType.VALUE_DIST in req_types_present:
-            type_labels.append("VALUE_DIST")
 
         included = " + ".join(type_labels)
         label = f"Combined Aggregate Query ({included})"
 
         indent = "\n    "
-        src_select = indent.join(src_parts)
-        tgt_select = indent.join(tgt_parts)
+        src_select = (",\n    ").join(src_parts)
+        tgt_select = (",\n    ").join(tgt_parts)
 
         src_sql = (
-            f"-- ⑤–⑫ COMBINED AGGREGATE: PostgreSQL ({pg_full})\n"
+            f"-- ⑤–⑫ COMBINED AGGREGATE: {source_db_type.upper()} ({pg_full})\n"
             f"-- Includes: {included}\n"
             f"-- One scan replaces {len(req_types_present)} separate aggregate query types.\n"
             f"SELECT\n    {src_select}\nFROM {pg_full};"
@@ -386,7 +401,19 @@ class QueryOptimizer:
             f"between source and target. Column names are identical so direct "
             f"comparison is possible."
         )
+        validate_sql_pair(src_sql, tgt_sql, source_db_type)
         return src_sql, tgt_sql, label, note
+
+    def _value_distribution_sql(self, column, pg_full, sf_full, sf_where, source_db_type):
+        """Generate a real value-distribution result set for one column."""
+        source_column = column.metadata.column_name
+        target_column = source_column.upper()
+        source_value = f"COALESCE(CAST({source_column} AS VARCHAR(MAX)), '<<NULL>>')" if source_db_type.lower() == "mssql" else f"COALESCE(CAST({source_column} AS TEXT), '<<NULL>>')"
+        target_value = f"COALESCE(CAST({target_column} AS STRING), '<<NULL>>')"
+        src = f"SELECT\n    {source_value} AS value,\n    COUNT(*) AS value_count\nFROM {pg_full}\nGROUP BY {source_value}\nORDER BY value_count DESC;"
+        tgt = f"SELECT\n    {target_value} AS value,\n    COUNT(*) AS value_count\nFROM {sf_full}{sf_where}\nGROUP BY {target_value}\nORDER BY value_count DESC;"
+        validate_sql_pair(src, tgt, source_db_type)
+        return src, tgt
 
     # -----------------------------------------------------------------------
     # Duplicate check SQL
