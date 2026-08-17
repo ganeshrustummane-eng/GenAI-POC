@@ -1,5 +1,30 @@
 # Validation Methodology
 
+## Coverage Comes First
+
+A result is meaningless without knowing what it covered. Every run reports both:
+
+```text
+data_validation Addresses: PASS
+24 of 27 columns validated (88.9%) — 3 excluded: uTS (rowversion — not
+comparable), GeographyData (binary type), LegacyFlag (no matching target column)
+```
+
+Read them together, always:
+
+| Pass rate | Coverage | Interpretation |
+|---|---|---|
+| PASS | 100% | The table is validated. |
+| PASS | 88% | The compared columns match; three were never checked. |
+| PASS | 40% | Flagged `LOW COVERAGE`. This is not a validated table. |
+| PASS | UNKNOWN | No plan exists. Coverage is unproven — regenerate. |
+
+Exclusions are the easiest way to turn a validator into a rubber stamp, so:
+
+- every excluded column carries a recorded reason
+- coverage below 80% is flagged and any PASS is labelled partial
+- a table with no plan reports UNKNOWN coverage, never full coverage
+
 ## Result Meaning
 
 ### PASS
@@ -57,6 +82,29 @@ Source SQL must use the source database dialect.
 MSSQL must not use PostgreSQL-only constructs such as `::type`, `AS TEXT`, `TO_CHAR`, `JSONB`, or `encode()`.
 
 PostgreSQL may use PostgreSQL-specific casts, JSONB, timezone, and encoding functions.
+
+### Enforcement
+
+Dialect rules are enforced at generation time, not at execution time. AI output is
+checked for forbidden constructs, the `<<NULL>>` sentinel, required aliases, and
+missing commas. Failures are fed back to the model for up to three attempts; if
+the last attempt still fails, generation raises and no YAML is written.
+
+There is no fallback to rule-based SQL. Generation either produces validated SQL
+or it fails — it never produces SQL of unknown quality.
+
+### Alias alignment
+
+Both sides of a comparison are AI-generated from the same plan and required to
+use the identical alias, always derived from the **source** column name:
+
+```text
+source:  ... AS AcctSoftwareID_normalized
+target:  ... AS "AcctSoftwareID_normalized"
+```
+
+This is what guarantees that a renamed target column is compared against the
+correct source column rather than lining up by accident.
 
 Snowflake target queries use Snowflake functions and preserve `_FIVETRAN_ACTIVE = TRUE` filtering when the target exposes that column.
 

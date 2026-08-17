@@ -60,7 +60,7 @@ def regenerate_addresses_config():
     # Import necessary modules
     try:
         from sql_extractor.extractors import MSSQLExtractor
-        from ai_transformation.static_rule_mapper import StaticRuleMapper
+        from ai_transformation import RuleMapperOrchestrator
         from generated_queries.sql_query_generator import SQLQueryGenerator
         from generated_queries.yaml_config_writer import YAMLConfigWriter
     except ImportError as e:
@@ -97,7 +97,7 @@ def regenerate_addresses_config():
     # Here we would normally:
     # 1. Extract source columns from MSSQL
     # 2. Extract target columns from Snowflake
-    # 3. Map columns with StaticRuleMapper
+    # 3. Map columns with RuleMapperOrchestrator (AI)
     # 4. Generate queries with SQLQueryGenerator
     # 5. Write to YAML with YAMLConfigWriter
     

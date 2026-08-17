@@ -20,6 +20,8 @@ Important packages include:
 
 - `python-dotenv` for `.env` loading
 - `pyyaml` for validation configuration
+- `pydantic` for validating generated configs at load time
+- `openai` for AI mapping and SQL generation (**required**)
 - `pandas` for comparison and CSV reports
 - `psycopg2-binary` for PostgreSQL
 - `pyodbc` for Microsoft SQL Server
@@ -28,6 +30,31 @@ Important packages include:
 - `pytest` for regression tests
 
 For MSSQL, install an appropriate Microsoft ODBC Driver separately.
+
+> On Python 3.13/3.14, prefer `--only-binary=:all:`. Older pinned driver versions
+> have no wheels for those interpreters and pip will otherwise attempt — and fail
+> — a source build.
+
+## 1a. Configure AI Access (required)
+
+Column mapping and validation SQL are AI-generated. There is no rule-based
+fallback, so this is not optional:
+
+```env
+DIAL_API_KEY=<your key>
+DIAL_API_BASE=https://ai-proxy.lab.epam.com
+DIAL_API_VERSION=2025-04-01-preview
+DIAL_MODEL=gpt-4o
+```
+
+The DIAL endpoint requires VPN access. Verify with:
+
+```powershell
+python src\validate_cli.py list-models
+```
+
+Work that does not need a key: `pytest`, `validate_cli.py lint`, and
+`run_all_tests.py --skip-live`.
 
 ## 2. Configure `.env`
 
@@ -91,26 +118,41 @@ SNOWFLAKE_ROLE=<role-optional>
 
 ### AI configuration
 
-AI is optional. Without a DIAL key, deterministic static rules are used.
+**Required.** See section 1a. Column mapping and validation SQL are AI-generated
+and there is no static fallback — an unset `DIAL_API_KEY` makes generation fail
+rather than silently produce unreviewed output.
 
 ```env
-DIAL_API_KEY=<optional-key>
+DIAL_API_KEY=<key>
 DIAL_API_BASE=https://ai-proxy.lab.epam.com
 DIAL_API_VERSION=2025-04-01-preview
 DIAL_MODEL=gpt-4o
 ```
 
-## 3. Non-Secret Metadata Fallback
+## 3. Non-Secret Metadata
 
-`config/database_registry.yaml` can provide database and schema names when those values are missing from `.env`.
+`config/database_registry.yaml` provides database and schema names when those
+values are missing from `.env`. Keys match the `.env` prefix with the trailing
+underscore removed (`SRC_1_HOST` → key `SRC_1`).
 
-It must contain metadata only. Do not put passwords, usernames, API keys, or tokens in this file.
+It must contain metadata only. Do not put passwords, usernames, API keys, or
+tokens in this file — it is version-controlled.
 
 ## 4. Verify Environment
 
+Offline first (no database, no API key):
+
+```powershell
+python -m pytest -q
+python src\validate_cli.py lint
+python tests\e2e\run_all_tests.py --skip-live
+```
+
+Then live:
+
 ```powershell
 python test_env_connections.py
-python tests\\e2e\\run_all_tests.py --skip-live
+python src\validate_cli.py list-models
 ```
 
 Expected connection result:

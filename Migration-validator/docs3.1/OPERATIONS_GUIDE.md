@@ -1,5 +1,25 @@
 # Operations Guide
 
+> **`DIAL_API_KEY` is required.** Column mapping and validation SQL are
+> AI-generated with no fallback. Without a key, generation fails with a clear
+> message rather than producing unreviewed rule-based output.
+
+## Lint Configs (do this first)
+
+Catches duplicate table keys, missing/misspelled fields, non-SELECT queries, and
+`.env` references that resolve to nothing — with no database connection and no
+API key.
+
+```powershell
+python src\validate_cli.py lint
+```
+
+Exit code 0 = clean, 1 = problems found. Safe to run in CI. It also reports
+plan/config drift and per-table column coverage.
+
+If lint reports problems, **regenerate** — do not hand-edit. YAML files under
+`config/bronze/` are render targets.
+
 ## Run the Interactive CLI
 
 From the repository root:
@@ -47,6 +67,23 @@ python src\\validate_cli.py generate `
 
 Interactive workflows display source columns and accept column numbers or names. Excluded columns are removed before mapping and are not written into generated SQL.
 
+### Every run reports what it did not check
+
+Exclusions are never silent. Generation and batch runs both print:
+
+```text
+COLUMN COVERAGE — Addresses
+----------------------------------------------------------
+Validated : 24 / 27 (88.9%)
+Excluded  : 3
+  ✗ uTS             [timestamp] — rowversion — not comparable
+  ✗ GeographyData   [geography] — binary type, excluded by policy
+  ✗ LegacyFlag                  — no matching target column
+```
+
+Below 80% coverage the run is flagged `LOW COVERAGE` and any PASS is labelled
+partial. Treat a high pass rate with low coverage as a warning, not a result.
+
 ## Run YAML Validation
 
 Use menu option `[9]`, or execute the Python API:
@@ -65,10 +102,16 @@ results = executor.execute_batch(
 
 ## Test the Whole Framework
 
+Unit and contract tests (no database, no API key):
+
+```powershell
+python -m pytest -q
+```
+
 Non-live checks:
 
 ```powershell
-python tests\\e2e\\run_all_tests.py --skip-live
+python tests\e2e\run_all_tests.py --skip-live
 ```
 
 Full live checks:
@@ -91,11 +134,25 @@ python tests\\e2e\\run_all_tests.py --validation-types count_validation
 
 ## Output Locations
 
-Generated configuration:
+The contract (read this to learn what a run intended to validate and why a
+column was skipped):
+
+```text
+output/plans/bronze/<table>.plan.json
+```
+
+Generated configuration (render targets — regenerate, never hand-edit):
 
 ```text
 config/bronze/count_validation/
 config/bronze/data_validation/
+```
+
+Hand-authored policy (safe to edit):
+
+```text
+config/exclusions.yaml
+config/database_registry.yaml
 ```
 
 Runtime reports:

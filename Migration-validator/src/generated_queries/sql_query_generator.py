@@ -41,9 +41,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional  # noqa: F401 (Optional used in generate())
 
-from ai_transformation.static_rule_mapper import ColumnRuleMapping
+from ai_transformation.column_mapping import ColumnRuleMapping
 from rules import get_rule_for_type
-from generated_queries.ai_sql_generator import AISQLQueryGenerator, AIGeneratedQuery
+from generated_queries.ai_sql_generator import (
+    AIGeneratedQuery,
+    AISQLGenerationError,
+    AISQLQueryGenerator,
+)
 
 if TYPE_CHECKING:
     from core.validation_plan import CanonicalValidationPlan, ColumnMappingEntry
@@ -132,8 +136,14 @@ class SQLQueryGenerator:
       - Athena (athena, trino, presto)
       - Snowflake (snowflake)
 
-    Uses AI-powered generation when DIAL_API_KEY is set, falls back to
-    rule-based generation otherwise.
+    AI-only comparison SQL
+    ----------------------
+    The data-validation SELECTs on BOTH sides are written by AI. There is no
+    rule-based fallback: if AI is unavailable or its output fails dialect
+    validation, generation raises AISQLGenerationError.
+
+    Row counts remain deterministic — COUNT(*) carries no dialect ambiguity
+    worth a model call, and a hand-written count cannot drift from intent.
 
     PK-Free Design
     --------------
@@ -144,7 +154,7 @@ class SQLQueryGenerator:
     NULL Handling
     -------------
     COALESCE(CAST(expr AS TEXT/STRING), '<<NULL>>') is applied to EVERY
-    column via the rule's apply_source() / apply_snowflake() methods.
+    column so NULL and the literal string compare identically on both sides.
 
     Fivetran Filter
     ---------------
@@ -160,21 +170,39 @@ class SQLQueryGenerator:
         Initialize SQL Query Generator.
 
         Args:
-            use_ai    : If True, use AI-powered generation when available (default: True)
-            ai_model  : AI model to use (e.g. 'gpt-4o', 'gpt-4o-mini', 'claude-3-5-sonnet')
-        """
-        self._use_ai = use_ai
-        self._ai_generator = None
+            use_ai    : Retained for call-site compatibility. Must be True —
+                        passing False raises, because no non-AI path exists.
+            ai_model  : AI model to use (e.g. 'gpt-4o', 'gpt-4o-mini')
 
-        if use_ai:
-            try:
-                self._ai_generator = AISQLQueryGenerator(model=ai_model)
-                if self._ai_generator._ai_active:
-                    print(f"  [SQLQueryGenerator] AI-powered generation enabled (model: {self._ai_generator.model})")
-                else:
-                    print("  [SQLQueryGenerator] AI unavailable — using rule-based generation")
-            except Exception as e:
-                print(f"  [SQLQueryGenerator] AI initialization failed: {e} — using rule-based generation")
+        Raises:
+            AISQLGenerationError: DIAL_API_KEY missing or the client cannot start.
+        """
+        if not use_ai:
+            raise AISQLGenerationError(
+                "SQLQueryGenerator(use_ai=False) is no longer supported. "
+                "Validation SQL is AI-generated only."
+            )
+
+        self._use_ai = True
+        try:
+            self._ai_generator = AISQLQueryGenerator(model=ai_model)
+        except Exception as exc:
+            raise AISQLGenerationError(
+                f"Could not initialise the AI SQL generator: {exc}"
+            ) from exc
+
+        if not self._ai_generator._ai_active:
+            raise AISQLGenerationError(
+                "No AI API key configured — cannot generate validation SQL.\n"
+                "  Set one of the following in .env:\n"
+                "    DIAL_API_KEY=...    (EPAM DIAL — access to GPT/Claude/Gemini)\n"
+                "    CLAUDE_API_KEY=...  (Anthropic direct — no VPN needed)\n"
+                "  Or run: python validate_cli.py  →  choose [8] Configure API key"
+            )
+
+        print(
+            f"  [SQLQueryGenerator] AI generation active (model: {self._ai_generator.model})"
+        )
 
     def generate(
         self,
@@ -236,7 +264,7 @@ class SQLQueryGenerator:
         qs.row_count_source       = self._row_count_pg(pg_schema, pg_table, src_type)
         qs.row_count_target       = self._row_count_sf(sf_full, has_fivetran_active)
         qs.main_validation_source = self._main_validation_pg(pg_schema, pg_table, active, src_type)
-        qs.main_validation_target = self._main_validation_sf(sf_full, active, has_fivetran_active)
+        qs.main_validation_target = self._main_validation_sf(sf_full, active, has_fivetran_active, src_type)
         qs.null_pct_source        = self._null_pct_pg(pg_schema, pg_table, active, src_type)
         qs.null_pct_target        = self._null_pct_sf(sf_full, active, has_fivetran_active)
         qs.distinct_count_source  = self._distinct_count_pg(pg_schema, pg_table, active, src_type)
@@ -331,44 +359,18 @@ class SQLQueryGenerator:
                 f"SELECT 1;"
             )
 
-        # Try AI-powered generation first
-        if self._use_ai and self._ai_generator and self._ai_generator._ai_active:
-            try:
-                result = self._ai_generator.generate_validation_query(
-                    schema=schema,
-                    table=table,
-                    mappings=mappings,
-                    source_db_type=src_type,
-                    query_type="data_validation",
-                    has_fivetran_active=False,
-                )
-                if result.confidence > 0.7 and not result.warnings:
-                    # AI generated valid query
-                    return f"-- ③ SOURCE: {label} ({schema}.{table})\n-- AI-generated query (confidence: {result.confidence:.2f})\n{result.query}"
-                else:
-                    print(f"  [SQLQueryGenerator] AI confidence low ({result.confidence:.2f}) or warnings present — using rule-based fallback")
-                    if result.warnings:
-                        for warning in result.warnings:
-                            print(f"    WARNING: {warning}")
-            except Exception as e:
-                print(f"  [SQLQueryGenerator] AI generation failed: {e} — using rule-based fallback")
-
-        # Fallback to rule-based generation
-        select_lines = []
-        for m in mappings:
-            expr = m.rule.apply_source(
-                src_type,
-                m.source_column,
-                alias=f"{m.source_column}_normalized",
-            )
-            select_lines.append(f"    {expr}")
-
-        cols = ",\n".join(select_lines)
-
+        result = self._ai_generator.generate_validation_query(
+            schema=schema,
+            table=table,
+            mappings=mappings,
+            source_db_type=src_type,
+            query_type="data_validation",
+            has_fivetran_active=False,
+        )
         return (
             f"-- ③ SOURCE: {label} ({schema}.{table})\n"
-            f"SELECT\n{cols}\n"
-            f"FROM {schema}.{table};"
+            f"-- AI-generated ({self._ai_generator.model}, confidence {result.confidence:.2f})\n"
+            f"{result.query}"
         )
 
     # -----------------------------------------------------------------------
@@ -380,6 +382,7 @@ class SQLQueryGenerator:
         sf_full: str,
         mappings: List[ColumnRuleMapping],
         fivetran_active: bool,
+        src_type: str = "postgresql",
     ) -> str:
         if not mappings:
             return (
@@ -388,26 +391,25 @@ class SQLQueryGenerator:
                 f"SELECT 1;"
             )
 
-        select_lines = []
-        for m in mappings:
-            # Alias uses source_column name so both sides share the same column names
-            expr = m.rule.apply_snowflake(
-                m.target_column,
-                alias=f"{m.source_column}_normalized",
-            )
-            select_lines.append(f"    {expr}")
-
-        where = "\nWHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else ""
-        cols  = ",\n".join(select_lines)
-
+        result = self._ai_generator.generate_target_validation_query(
+            target_fqn=sf_full,
+            mappings=mappings,
+            source_db_type=src_type,
+            target_db_type="snowflake",
+            has_fivetran_active=fivetran_active,
+        )
         return (
             f"-- ④ TARGET: Snowflake ({sf_full})\n"
-            f"SELECT\n{cols}\n"
-            f"FROM {sf_full}{where};"
+            f"-- AI-generated ({self._ai_generator.model}, confidence {result.confidence:.2f})\n"
+            f"{result.query}"
         )
 
     # -----------------------------------------------------------------------
     # ⑤ NULL % Per Column — Source
+    #
+    # Pure aggregates, deterministic on purpose: there is no dialect ambiguity
+    # in SUM(CASE WHEN col IS NULL ...) worth an AI call, and these blocks are
+    # diagnostics rather than the comparison contract.
     # -----------------------------------------------------------------------
 
     def _null_pct_pg(
@@ -421,24 +423,6 @@ class SQLQueryGenerator:
             return ""
 
         label = _source_label(src_type)
-
-        # Try AI-powered generation
-        if self._use_ai and self._ai_generator and self._ai_generator._ai_active:
-            try:
-                result = self._ai_generator.generate_validation_query(
-                    schema=schema,
-                    table=table,
-                    mappings=mappings,
-                    source_db_type=src_type,
-                    query_type="null_pct",
-                    has_fivetran_active=False,
-                )
-                if result.confidence > 0.7:
-                    return f"-- ⑤ NULL % CHECK: {label} ({schema}.{table})\n-- AI-generated\n{result.query}"
-            except Exception:
-                pass  # Fall back to rule-based
-
-        # Rule-based fallback
         null_parts = ",\n    ".join(
             f"ROUND(100.0 * SUM(CASE WHEN {m.source_column} IS NULL THEN 1 ELSE 0 END)"
             f" / COUNT(*), 2) AS {m.source_column}_null_pct"
@@ -490,24 +474,6 @@ class SQLQueryGenerator:
             return ""
 
         label = _source_label(src_type)
-
-        # Try AI-powered generation
-        if self._use_ai and self._ai_generator and self._ai_generator._ai_active:
-            try:
-                result = self._ai_generator.generate_validation_query(
-                    schema=schema,
-                    table=table,
-                    mappings=mappings,
-                    source_db_type=src_type,
-                    query_type="distinct_count",
-                    has_fivetran_active=False,
-                )
-                if result.confidence > 0.7:
-                    return f"-- ⑦ DISTINCT VALUE COUNT: {label} ({schema}.{table})\n-- AI-generated\n{result.query}"
-            except Exception:
-                pass  # Fall back to rule-based
-
-        # Rule-based fallback
         is_pg = src_type in ("postgres", "postgresql")
 
         # json has no equality operator in PostgreSQL; cast to jsonb first so

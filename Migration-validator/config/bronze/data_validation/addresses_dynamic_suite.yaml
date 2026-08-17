@@ -1,7 +1,7 @@
 # ============================================================
 # Migration Validator — Dynamic Suite YAML Validation Config
 # Table      : Addresses
-# Generated  : 2026-08-15T01:11:55.634069
+# Generated  : 2026-08-17T11:53:04.268843
 # By         : AI (model: gpt-4o)
 # Checks     : 4 query pair(s)
 #              2 baseline, 2 conditional
@@ -103,8 +103,6 @@ tables:
         source_table_name: Addresses
         source: mssql
         sourcequery: |
-          -- Includes: NULL% + DISTINCT + MIN/MAX
-          -- One scan replaces 3 separate aggregate query types.
           SELECT
               COUNT(*) AS total_rows,
               ROUND(100.0 * SUM(CASE WHEN AddressID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS AddressID_null_pct,
@@ -173,7 +171,6 @@ tables:
         target_table_name: ADDRESSES
         target: snowflake
         targetquery: |
-          -- Includes: NULL% + DISTINCT + MIN/MAX
           SELECT
               COUNT(*) AS total_rows,
               ROUND(100.0 * SUM(CASE WHEN ADDRESSID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS AddressID_null_pct,
@@ -267,8 +264,8 @@ tables:
       # Run as: SELECT COUNT(*) FROM <table> WHERE NOT (<cond>)
       # Any count > 0 = data quality issue.
       # These are not executable blocks — review and adapt manually.
-      # [longitude_latitude_range] Ensure longitude and latitude values are within valid geographic ranges.: (dcLongitude IS NULL OR (dcLongitude >= -180 AND dcLongitude <= 180)) AND (dcLatitude IS NULL OR (dcLatitude >= -90 AND dcLatitude <= 90))
-      # [postal_code_not_empty_for_country] Ensure that postal code is not NULL when a country is specified.: sCountry IS NOT NULL AND sPostalCode IS NULL
-      # [phone_number_length] Ensure phone numbers are within a reasonable length range (e.g., 7 to 15 characters).: ((sPhone1 IS NULL OR (LENGTH(sPhone1) BETWEEN 7 AND 15)) AND (sPhone2 IS NULL OR (LENGTH(sPhone2) BETWEEN 7 AND 15)) AND (sPhone3 IS NULL OR (LENGTH(sPhone3) BETWEEN 7 AND 15)) AND (sPhone4 IS NULL OR (LENGTH(sPhone4) BETWEEN 7 AND 15)) AND (sPhone5 IS NULL OR (LENGTH(sPhone5) BETWEEN 7 AND 15)) AND (sPhone6 IS NULL OR (LENGTH(sPhone6) BETWEEN 7 AND 15)))
-      # [updated_after_deleted] Ensure that the updated timestamp is not later than the deleted timestamp.: dDeleted IS NULL OR dUpdated <= dDeleted
-      # [archived_after_deleted] Ensure that the archived timestamp is not earlier than the deleted timestamp.: dArchived IS NULL OR dDeleted IS NULL OR dArchived >= dDeleted
+      # [longitude_latitude_range] Validate that longitude and latitude values fall within plausible geographic ranges.: (dcLongitude IS NOT NULL AND (dcLongitude < -180 OR dcLongitude > 180)) OR (dcLatitude IS NOT NULL AND (dcLatitude < -90 OR dcLatitude > 90))
+      # [postal_code_length] Ensure postal codes are within a reasonable length range.: sPostalCode IS NOT NULL AND LENGTH(sPostalCode) > 20
+      # [phone_number_length] Validate that phone numbers are within a plausible length range.: (sPhone1 IS NOT NULL AND LENGTH(sPhone1) > 15) OR (sPhone2 IS NOT NULL AND LENGTH(sPhone2) > 15) OR (sPhone3 IS NOT NULL AND LENGTH(sPhone3) > 15) OR (sPhone4 IS NOT NULL AND LENGTH(sPhone4) > 15) OR (sPhone5 IS NOT NULL AND LENGTH(sPhone5) > 15) OR (sPhone6 IS NOT NULL AND LENGTH(sPhone6) > 15)
+      # [deleted_before_updated] Ensure that the deletion timestamp does not precede the update timestamp.: dDeleted IS NOT NULL AND dUpdated IS NOT NULL AND dDeleted < dUpdated
+      # [archived_after_updated] Ensure that the archival timestamp does not precede the update timestamp.: dArchived IS NOT NULL AND dUpdated IS NOT NULL AND dArchived < dUpdated

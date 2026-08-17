@@ -28,6 +28,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+# Bumped whenever the persisted plan JSON changes shape incompatibly.
+PLAN_SCHEMA_VERSION = 1
+
 
 # ---------------------------------------------------------------------------
 # Enumerations
@@ -104,15 +107,18 @@ class ColumnMappingEntry:
     composite_pk_group:  Optional[List[str]] = None   # all PK columns when composite
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize to dict for JSON/YAML output."""
+        """Serialize losslessly — this dict is the persisted contract."""
         d: Dict[str, Any] = {
             "source_column":       self.source_column,
             "source_type":         self.source_type,
+            "source_normalized":   self.source_normalized,
             "target_column":       self.target_column,
             "target_type":         self.target_type,
+            "target_normalized":   self.target_normalized,
             "match_method":        self.match_method,
             "confidence":          round(self.confidence, 3),
             "transformation_rule": self.transformation_rule,
+            "validation_rules":    list(self.validation_rules),
             "reason":              self.reason,
         }
         if self.fuzzy_score > 0.0:
@@ -128,7 +134,39 @@ class ColumnMappingEntry:
             d["skip_reason"] = self.skip_reason
         if self.is_primary_key:
             d["is_primary_key"] = True
+            if self.pk_ordinal is not None:
+                d["pk_ordinal"] = self.pk_ordinal
+            if self.composite_pk_group:
+                d["composite_pk_group"] = list(self.composite_pk_group)
         return d
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "ColumnMappingEntry":
+        """Rebuild an entry from its ``to_dict()`` form."""
+        source_column = d["source_column"]
+        target_column = d.get("target_column", "")
+        return cls(
+            source_column=source_column,
+            source_type=d.get("source_type", ""),
+            source_normalized=d.get("source_normalized", source_column.lower()),
+            target_column=target_column,
+            target_type=d.get("target_type", ""),
+            target_normalized=d.get("target_normalized", target_column.lower()),
+            match_method=d.get("match_method", MatchMethod.EXACT.value),
+            fuzzy_score=float(d.get("fuzzy_score", 0.0)),
+            confidence=float(d.get("confidence", 1.0)),
+            confidence_breakdown=d.get("confidence_breakdown"),
+            transformation_rule=d.get("transformation_rule", "text"),
+            validation_rules=list(d.get("validation_rules", [])),
+            reason=d.get("reason", ""),
+            ai_resolved=bool(d.get("ai_resolved", False)),
+            learned_example_used=d.get("learned_example_used"),
+            skip_validation=bool(d.get("skip_validation", False)),
+            skip_reason=d.get("skip_reason", ""),
+            is_primary_key=bool(d.get("is_primary_key", False)),
+            pk_ordinal=d.get("pk_ordinal"),
+            composite_pk_group=d.get("composite_pk_group"),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -253,11 +291,63 @@ class CanonicalValidationPlan:
     def skipped_column_names(self) -> List[str]:
         return [m.source_column for m in self.skipped_mappings]
 
+    def exclusion_summary(self) -> Dict[str, Any]:
+        """
+        Structured account of every column NOT validated.
+
+        Consumed by ExclusionReport so no run can report a pass rate without
+        also declaring what it declined to check.
+        """
+        excluded = [
+            {
+                "column": m.source_column,
+                "type":   m.source_type,
+                "reason": m.skip_reason or "no reason recorded",
+            }
+            for m in self.skipped_mappings
+        ]
+        for name in self.unmatched_source_columns:
+            if any(e["column"] == name for e in excluded):
+                continue
+            excluded.append(
+                {"column": name, "type": "", "reason": "no matching target column"}
+            )
+        return {
+            "total_source_columns": self.total_source_columns,
+            "validated":            self.active_count,
+            "excluded":             excluded,
+            "excluded_count":       len(excluded),
+            "coverage_pct": (
+                round(100.0 * self.active_count / self.total_source_columns, 1)
+                if self.total_source_columns
+                else 0.0
+            ),
+        }
+
     # ── Serialization ──────────────────────────────────────────────────────
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize the full plan to a dict."""
+        """
+        Serialize the full plan.
+
+        This dict IS the contract. SQL and YAML are rendered from it, never
+        the other way round, so it must round-trip losslessly via from_dict().
+        """
         return {
+            "schema_version": PLAN_SCHEMA_VERSION,
+            "source": {
+                "database": self.source_database,
+                "db_type":  self.source_db_type,
+                "schema":   self.source_schema,
+                "table":    self.source_table,
+            },
+            "target": {
+                "database": self.target_database,
+                "db_type":  "snowflake",
+                "schema":   self.target_schema,
+                "table":    self.target_table,
+            },
+            # Flat display strings — convenience for humans and old readers.
             "source_table":   f"{self.source_database}.{self.source_schema}.{self.source_table}",
             "target_table":   f"{self.target_database}.{self.target_schema}.{self.target_table}",
             "status":         self.status,
@@ -281,6 +371,7 @@ class CanonicalValidationPlan:
                 "ai_resolved":          len(self.ai_resolved_matches),
                 "unmatched_source":     len(self.unmatched_source_columns),
             },
+            "exclusions": self.exclusion_summary(),
             "warnings":    self.warnings,
             "ambiguities": self.ambiguities,
             "unmatched_source_columns": self.unmatched_source_columns,
@@ -288,21 +379,65 @@ class CanonicalValidationPlan:
             "mappings": [m.to_dict() for m in self.mappings],
         }
 
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "CanonicalValidationPlan":
+        """Rebuild a plan from its persisted JSON form."""
+        version = d.get("schema_version")
+        if version is not None and int(version) > PLAN_SCHEMA_VERSION:
+            raise ValueError(
+                f"Plan schema_version {version} is newer than this build "
+                f"supports ({PLAN_SCHEMA_VERSION}). Upgrade the validator."
+            )
+
+        source = d.get("source") or {}
+        target = d.get("target") or {}
+        pks    = d.get("primary_keys") or {}
+
+        return cls(
+            source_database=source.get("database", ""),
+            source_db_type=source.get("db_type", ""),
+            source_schema=source.get("schema", ""),
+            source_table=source.get("table", ""),
+            target_database=target.get("database", ""),
+            target_schema=target.get("schema", ""),
+            target_table=target.get("table", ""),
+            mappings=[ColumnMappingEntry.from_dict(m) for m in d.get("mappings", [])],
+            has_fivetran_active=bool(d.get("has_fivetran_active", False)),
+            source_primary_keys=list(pks.get("source", [])),
+            target_primary_keys=list(pks.get("target", [])),
+            pk_mismatch=bool(pks.get("mismatch", False)),
+            pk_mismatch_reason=pks.get("mismatch_reason", ""),
+            status=d.get("status", PlanStatus.COMPLETE.value),
+            warnings=list(d.get("warnings", [])),
+            ambiguities=list(d.get("ambiguities", [])),
+            unmatched_source_columns=list(d.get("unmatched_source_columns", [])),
+            unmatched_target_columns=list(d.get("unmatched_target_columns", [])),
+            ai_calls_made=int(d.get("ai_calls_made", 0)),
+            model_used=d.get("model_used", "N/A"),
+            generated_by=d.get("generated_by", "ai"),
+            generated_at=d.get("generated_at", datetime.now().isoformat()),
+        )
+
     def summary_lines(self) -> List[str]:
         """Return lines for the CLI summary display."""
+        excl = self.exclusion_summary()
         lines = [
             f"Source table      : {self.source_schema}.{self.source_table}",
             f"Target table      : {self.target_table}",
-            f"Columns matched   : {self.active_count} / {self.total_source_columns}",
+            f"Columns validated : {excl['validated']} / {excl['total_source_columns']}"
+            f"  ({excl['coverage_pct']}% coverage)",
             f"Exact matches     : {len(self.exact_matches)}",
             f"Fuzzy matches     : {len(self.fuzzy_matches)}",
             f"AI-resolved       : {len(self.ai_resolved_matches)}",
-            f"Unmatched         : {len(self.unmatched_source_columns)}",
             f"Fivetran filter   : {self.has_fivetran_active}",
             f"AI calls made     : {self.ai_calls_made}",
             f"Model used        : {self.model_used}",
             f"Status            : {self.status.upper()}",
         ]
+        if excl["excluded"]:
+            lines.append(f"EXCLUDED ({excl['excluded_count']}) — not validated:")
+            for item in excl["excluded"]:
+                lines.append(f"  ✗ {item['column']} — {item['reason']}")
         if self.warnings:
             lines.append(f"Warnings ({len(self.warnings)}):")
             for w in self.warnings:

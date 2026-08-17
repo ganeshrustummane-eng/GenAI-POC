@@ -7,6 +7,7 @@ import argparse
 import importlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -167,7 +168,18 @@ def regression_tests():
     completed = subprocess.run(command, cwd=REPO_ROOT, text=True, capture_output=True)
     if completed.returncode:
         raise RuntimeError(completed.stdout + "\n" + completed.stderr)
-    return {"command": " ".join(command), "output": completed.stdout.strip()}
+
+    output = completed.stdout.strip()
+    match = re.search(r"(\d+) passed", output)
+    collected = int(match.group(1)) if match else 0
+    # pytest exits 0 when it collects nothing, so this stage used to report PASS
+    # while running no tests at all. Refuse to call an empty run a success.
+    if collected == 0:
+        raise RuntimeError(
+            "pytest collected 0 tests — the regression stage would have reported "
+            "PASS without running anything. Check pytest.ini and tests/.\n" + output
+        )
+    return {"command": " ".join(command), "tests_passed": collected, "output": output}
 
 
 def connection_tests():

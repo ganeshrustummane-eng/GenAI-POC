@@ -124,21 +124,23 @@ class ExclusionManager:
             print(f"  [INFO] Proceeding with built-in defaults only")
             self._config = self._default_config()
             return False
-        
+
         try:
             with open(self._config_path, encoding="utf-8") as f:
                 self._config = yaml.safe_load(f) or {}
-            
-            self._loaded = True
-            print(f"  ✓ Loaded exclusion rules from {self._config_path.name}")
-            self._print_stats()
-            return True
-            
-        except Exception as exc:
+        except (OSError, yaml.YAMLError) as exc:
+            # Only real load failures fall back. A broad except here previously
+            # swallowed a UnicodeEncodeError from the success message below,
+            # silently discarding every configured exclusion rule on Windows.
             print(f"  [ERROR] Failed to load exclusions config: {exc}")
             print(f"  [INFO] Falling back to built-in defaults")
             self._config = self._default_config()
             return False
+
+        self._loaded = True
+        print(f"  [OK] Loaded exclusion rules from {self._config_path.name}")
+        self._print_stats()
+        return True
     
     def _default_config(self) -> Dict:
         """Return minimal default config if file is missing."""
@@ -164,10 +166,10 @@ class ExclusionManager:
         type_count = len(self._config.get("type_based_exclusions", {}).get("rules", []))
         table_count = len(self._config.get("table_specific_exclusions", {})) - 1  # -1 for description key
         
-        print(f"    • Global exclusions: {global_count}")
-        print(f"    • Pattern rules: {pattern_count}")
-        print(f"    • Type-based rules: {type_count}")
-        print(f"    • Table-specific: {table_count} table(s)")
+        print(f"    - Global exclusions: {global_count}")
+        print(f"    - Pattern rules: {pattern_count}")
+        print(f"    - Type-based rules: {type_count}")
+        print(f"    - Table-specific: {table_count} table(s)")
     
     # ──────────────────────────────────────────────────────────────────────
     # Public API — Exclusion Decision

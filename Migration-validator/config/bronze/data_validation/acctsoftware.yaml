@@ -1,7 +1,7 @@
 # ============================================================
 # Migration Validator — Data Validation Config
 # Table      : AcctSoftware
-# Generated  : 2026-08-15T01:11:07.443041
+# Generated  : 2026-08-17T11:52:23.392411
 # By         : AI (model: gpt-4o)
 # Columns    : 6 comparable columns
 #
@@ -36,25 +36,24 @@ tables:
         source: mssql
         pksourcecolumn: AcctSoftwareID
         sourcequery: |
-          -- AI-generated query (confidence: 0.95)
           SELECT 
-              COALESCE(CAST(AcctSoftwareID AS VARCHAR(MAX)), '<<NULL>>') AS ACCTSOFTWAREID_normalized,
-              COALESCE(LTRIM(RTRIM(CAST(sSoftwareName AS VARCHAR(MAX)))), '<<NULL>>') AS SSOFTWARENAME_normalized,
-              COALESCE(CASE WHEN bPermanent = 1 THEN '1' WHEN bPermanent = 0 THEN '0' ELSE NULL END, '<<NULL>>') AS BPERMANENT_normalized,
-              COALESCE(FORMAT(dDeleted, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') AS DDELETED_normalized,
-              COALESCE(FORMAT(dUpdated, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') AS DUPDATED_normalized,
-              COALESCE(CAST(OldPK AS VARCHAR(MAX)), '<<NULL>>') AS OLDPK_normalized
+              COALESCE(CAST(AcctSoftwareID AS VARCHAR(MAX)), '<<NULL>>') AS AcctSoftwareID_normalized,
+              COALESCE(LTRIM(RTRIM(CAST(sSoftwareName AS VARCHAR(MAX)))), '<<NULL>>') AS sSoftwareName_normalized,
+              COALESCE(CASE WHEN bPermanent = 1 THEN '1' WHEN bPermanent = 0 THEN '0' ELSE NULL END, '<<NULL>>') AS bPermanent_normalized,
+              COALESCE(FORMAT(dDeleted, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') AS dDeleted_normalized,
+              COALESCE(FORMAT(dUpdated, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') AS dUpdated_normalized,
+              COALESCE(CAST(OldPK AS VARCHAR(MAX)), '<<NULL>>') AS OldPK_normalized
           FROM dbo.AcctSoftware;
         target_table_name: ACCTSOFTWARE
         target: snowflake
         pktargetcolumn: ACCTSOFTWAREID
         targetquery: |
-          SELECT
-              COALESCE(CAST(CAST(ACCTSOFTWAREID AS STRING) AS STRING), '<<NULL>>') AS AcctSoftwareID_normalized,
-              COALESCE(CAST(TRIM(SSOFTWARENAME) AS STRING), '<<NULL>>') AS sSoftwareName_normalized,
-              COALESCE(CAST(CASE WHEN BPERMANENT = TRUE THEN '1' WHEN BPERMANENT = FALSE THEN '0' ELSE NULL END AS STRING), '<<NULL>>') AS bPermanent_normalized,
-              COALESCE(CAST(TO_VARCHAR(DDELETED, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>') AS dDeleted_normalized,
-              COALESCE(CAST(TO_VARCHAR(DUPDATED, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>') AS dUpdated_normalized,
-              COALESCE(CAST(CAST(OLDPK AS STRING) AS STRING), '<<NULL>>') AS OldPK_normalized
+          SELECT 
+              COALESCE(CAST(ACCTSOFTWAREID AS STRING), '<<NULL>>') AS "AcctSoftwareID_normalized",
+              COALESCE(CAST(SSOFTWARENAME AS STRING), '<<NULL>>') AS "sSoftwareName_normalized",
+              COALESCE(CASE WHEN BPERMANENT = TRUE THEN '1' WHEN BPERMANENT = FALSE THEN '0' ELSE NULL END, '<<NULL>>') AS "bPermanent_normalized",
+              COALESCE(TO_VARCHAR(DDELETED, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "dDeleted_normalized",
+              COALESCE(TO_VARCHAR(DUPDATED, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "dUpdated_normalized",
+              COALESCE(CAST(OLDPK AS STRING), '<<NULL>>') AS "OldPK_normalized"
           FROM DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.ACCTSOFTWARE
           WHERE _FIVETRAN_ACTIVE = TRUE;

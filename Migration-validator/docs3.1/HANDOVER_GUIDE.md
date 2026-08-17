@@ -43,20 +43,38 @@ flowchart TD
 
     I --> J[Column matching]
     J --> K[Exclusion filtering]
-    K --> L[Static rules or AI mapping]
-    L --> M[Dialect-aware SQL generation]
-    M --> N[Standard YAML]
+    K --> L[AI mapping - no fallback]
+    L --> PL[CanonicalValidationPlan]
+    PL --> PJ[(output/plans/*.plan.json - CONTRACT)]
+    PL --> XR[Exclusion / coverage report]
+    PL --> M[AI SQL generation - both sides]
+    M --> N[Standard YAML - upsert]
     M --> O[Dynamic Suite YAML]
 
-    N --> P[YAML executor]
-    O --> P
+    N --> SV[Pydantic schema validation]
+    O --> SV
+    SV --> P[YAML executor]
     P --> Q[Count validation]
     P --> R[Data validation]
     P --> S[Aggregates / duplicates / value distribution]
     Q --> T[CSV reports and logs]
     R --> T
     S --> T
+    XR --> T
 ```
+
+### Three rules that explain the design
+
+1. **The plan is the contract.** `output/plans/<layer>/<table>.plan.json` is the
+   single source of truth. YAML and SQL are render targets generated from it and
+   are never read back to reconstruct intent. Regenerate; do not hand-edit.
+2. **Generation is AI-only.** `DIAL_API_KEY` is required. The static rule mapper
+   and the rule-based SQL fallback were removed because their output was
+   indistinguishable downstream from reviewed AI output — a missing key silently
+   downgraded correctness while the run still reported success.
+3. **Exclusions are always reported.** Coverage is printed next to every pass
+   rate, every excluded column carries a reason, and coverage under 80% is
+   flagged. Unknown coverage is never treated as full coverage.
 
 ### Main implementation areas
 
@@ -159,7 +177,12 @@ Direct commands:
 python src\validate_cli.py connections
 python src\validate_cli.py list-tables
 python src\validate_cli.py rules
+python src\validate_cli.py lint
 ```
+
+`lint` needs no database and no API key. Run it after any generation and in CI:
+it catches duplicate table keys, schema violations, `.env` references that
+resolve to nothing, and plan/config drift.
 
 ---
 
@@ -190,9 +213,53 @@ python src\validate_cli.py generate --source 2 --pg-table Addresses --sf-table A
 
 Generated YAML files must be regenerated after changing exclusions. Existing YAML files are not retroactively modified.
 
+### Exclusions are never silent
+
+Every excluded column is recorded in the plan with a reason, and every run prints
+the accounting next to its result:
+
+```text
+COLUMN COVERAGE — Addresses
+----------------------------------------------------------
+Validated : 24 / 27 (88.9%)
+Excluded  : 3
+  ✗ uTS             [timestamp] — rowversion — not comparable
+  ✗ GeographyData   [geography] — binary type, excluded by policy
+  ✗ LegacyFlag                  — no matching target column
+```
+
+Rules the framework enforces:
+
+- Coverage and pass rate are reported together, never separately.
+- Coverage below 80% is flagged `LOW COVERAGE`; any PASS is labelled partial.
+- A table with no plan reports coverage as UNKNOWN, never as complete.
+- Batch runs aggregate coverage and name every thin table by name.
+
+This exists because exclusions are the easiest way to turn a validator into a
+rubber stamp. If exclusion is not loudly visible in the output, a 100% pass rate
+stops meaning anything.
+
+To audit exactly what a past run skipped, read its plan:
+
+```powershell
+Get-Content output\plans\bronze\addresses.plan.json | ConvertFrom-Json |
+  Select-Object -ExpandProperty exclusions
+```
+
 ---
 
 ## 6. SQL Generation Rules
+
+**All comparison SQL is AI-generated, on both sides.** `DIAL_API_KEY` is required.
+There is no rule-based fallback; generation raises `AISQLGenerationError` rather
+than emitting SQL of unknown quality.
+
+Row counts remain deterministic `COUNT(*)` — no dialect ambiguity worth a model
+call, and a hand-written count cannot drift from intent.
+
+Generated SQL is validated before it is accepted (forbidden dialect constructs,
+the `<<NULL>>` sentinel, required aliases, missing commas). Failures are fed back
+to the model for up to three attempts.
 
 The generator preserves the source dialect and uses Snowflake syntax for the target.
 
@@ -326,6 +393,10 @@ Typical layout:
 
 ```text
 output/
+├── plans/                      ← THE CONTRACT — read this to audit a run
+│   └── bronze/
+│       ├── addresses.plan.json
+│       └── acctsoftware.plan.json
 └── bronze/
     └── validation_<run_id>/
         ├── validation_<run_id>.log
@@ -335,6 +406,20 @@ output/
             ├── data_validation_summary.csv
             └── <table>_data_validation_mismatch_<run_id>.csv
 ```
+
+Each plan JSON records the source/target identity, every column mapping with its
+match method and confidence, the full exclusion accounting, the model used, and
+the generation timestamp. Plans are written atomically and round-trip losslessly.
+
+### What is safe to edit
+
+| Path | Hand-editable |
+|---|---|
+| `config/exclusions.yaml` | **Yes** |
+| `config/database_registry.yaml` | **Yes** |
+| `config/bronze/**/*.yaml` | No — regenerate |
+| `output/plans/**` | No — generated |
+| `output/**` reports | No |
 
 The orchestrated test report is written to:
 
@@ -352,7 +437,29 @@ output/batch/
 
 ## 10. Complete Test Process
 
-### Non-live test
+Run these in order and stop at the first failure. Steps 1–3 need no database and
+no API key.
+
+### 1. Unit and contract tests
+
+```powershell
+python -m pytest -q
+```
+
+Covers plan round-tripping, exclusion reporting, config schema validation,
+idempotent YAML writes, and regression guards proving the static fallbacks are
+gone.
+
+### 2. Config lint
+
+```powershell
+python src\validate_cli.py lint
+```
+
+Duplicate table keys, schema violations, broken `.env` references, plan/config
+drift. Exit code 0/1 — suitable for CI.
+
+### 3. Non-live test
 
 Use this when databases are unavailable:
 
@@ -507,6 +614,20 @@ The validator also accepts normalized aliases such as `source_key_normalized`.
 - `FAIL`: source and target executed, but data differs.
 - `ERROR`: query or connection could not execute.
 
+Always read the coverage line alongside the status. A PASS covering 40% of
+columns and a PASS covering 100% are not the same result.
+
+### "DIAL_API_KEY is not set"
+
+Expected behaviour, not a regression. Generation is AI-only. Set the key in
+`.env` and confirm VPN access to the DIAL endpoint.
+
+### Coverage reported as UNKNOWN
+
+The YAML exists but its plan does not, so there is no record of what was
+excluded. Regenerate the table. Unknown coverage is deliberately not treated as
+full coverage.
+
 ### No CSV visible
 
 Use the run ID printed in the console and inspect:
@@ -519,25 +640,49 @@ output/<layer>/validation_<run_id>/
 
 ## 13. Safe Extension Rules
 
-When adding a source database:
+### Invariants — do not break these
+
+1. **Never reintroduce a silent fallback.** If AI is unavailable or its output
+   fails validation, raise. The value of this tool is that a green result means
+   something; a degraded path that reports success destroys that.
+2. **Never read YAML to reconstruct intent.** The plan is the contract. If you
+   need to know what a run validated or excluded, load the plan via `PlanStore`.
+3. **Never write config YAML by appending.** Parse, upsert, rewrite. Appending
+   creates duplicate keys that YAML resolves last-wins, silently.
+4. **Never report a pass rate without coverage.** Every result surface must carry
+   the `ExclusionReport` headline.
+5. **Never exclude a column without a recorded reason.** An exclusion with no
+   reason is a defect, not a configuration choice.
+
+### When adding a source database
 
 1. Add its adapter under `src/db/`.
 2. Register it in `src/db/factory.py`.
 3. Add dialect-specific extractor behavior.
-4. Add rule renderers for source expressions.
-5. Add SQL validator rules for forbidden/required syntax.
-6. Add a connection stage to `tests/e2e/run_all_tests.py`.
-7. Add a generated SQL probe for the new dialect.
-8. Run both `--skip-live` and full live E2E tests.
+4. Add the dialect to `SUPPORTED_SOURCES` in `src/validation/config_schema.py`.
+5. Add its syntax rules to the AI system prompt in
+   `src/generated_queries/ai_sql_generator.py`.
+6. Add forbidden-construct checks to `_validate_generated_query` so bad output is
+   rejected and fed back to the model.
+7. Add a connection stage to `tests/e2e/run_all_tests.py`.
+8. Add a pytest case under `tests/`.
+9. Run `pytest`, `lint`, then both `--skip-live` and full live E2E tests.
 
-When adding a new validation type:
+### When adding a new validation type
 
-1. Add it to the validation enum or executor contract.
-2. Define its YAML shape.
-3. Implement source and Snowflake SQL.
+1. Add a block model to `src/validation/config_schema.py` so it is validated at
+   load time.
+2. Add it to the validation enum or executor contract.
+3. Implement source and Snowflake SQL generation from the plan.
 4. Add comparison behavior.
 5. Add summary and mismatch output.
-6. Add an orchestrator assertion.
+6. Add pytest coverage and an orchestrator assertion.
 7. Update this handover guide.
+
+### When changing the plan shape
+
+Bump `PLAN_SCHEMA_VERSION` in `src/core/validation_plan.py` and keep
+`to_dict()` / `from_dict()` lossless — `tests/test_plan_contract.py` enforces the
+round trip.
 
 Never commit `.env`, passwords, tokens, or saved credential files.

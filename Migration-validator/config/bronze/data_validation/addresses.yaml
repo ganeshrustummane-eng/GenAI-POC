@@ -1,7 +1,7 @@
 # ============================================================
 # Migration Validator — Data Validation Config
 # Table      : Addresses
-# Generated  : 2026-08-15T01:11:33.007736
+# Generated  : 2026-08-17T11:52:46.998920
 # By         : AI (model: gpt-4o)
 # Columns    : 26 comparable columns
 #
@@ -36,7 +36,6 @@ tables:
         source: mssql
         pksourcecolumn: AddressID
         sourcequery: |
-          -- AI-generated query (confidence: 0.95)
           SELECT 
             COALESCE(CAST(AddressID AS VARCHAR(MAX)), '<<NULL>>') AS AddressID_normalized,
             COALESCE(CAST(SiteID AS VARCHAR(MAX)), '<<NULL>>') AS SiteID_normalized,
@@ -69,32 +68,39 @@ tables:
         target: snowflake
         pktargetcolumn: ADDRESSID
         targetquery: |
-          SELECT
-              COALESCE(CAST(CAST(ADDRESSID AS STRING) AS STRING), '<<NULL>>') AS AddressID_normalized,
-              COALESCE(CAST(CAST(SITEID AS STRING) AS STRING), '<<NULL>>') AS SiteID_normalized,
-              COALESCE(CAST(TRIM(SMRMRS) AS STRING), '<<NULL>>') AS sMrMrs_normalized,
-              COALESCE(CAST(TRIM(SFNAME) AS STRING), '<<NULL>>') AS sFName_normalized,
-              COALESCE(CAST(TRIM(SMI) AS STRING), '<<NULL>>') AS sMI_normalized,
-              COALESCE(CAST(TRIM(SLNAME) AS STRING), '<<NULL>>') AS sLName_normalized,
-              COALESCE(CAST(TRIM(SCOMPANY) AS STRING), '<<NULL>>') AS sCompany_normalized,
-              COALESCE(CAST(TRIM(SADDR1) AS STRING), '<<NULL>>') AS sAddr1_normalized,
-              COALESCE(CAST(TRIM(SADDR2) AS STRING), '<<NULL>>') AS sAddr2_normalized,
-              COALESCE(CAST(TRIM(SCITY) AS STRING), '<<NULL>>') AS sCity_normalized,
-              COALESCE(CAST(TRIM(SREGION) AS STRING), '<<NULL>>') AS sRegion_normalized,
-              COALESCE(CAST(TRIM(SPOSTALCODE) AS STRING), '<<NULL>>') AS sPostalCode_normalized,
-              COALESCE(CAST(TRIM(SCOUNTRY) AS STRING), '<<NULL>>') AS sCountry_normalized,
-              COALESCE(CAST(TRIM(SPHONE1) AS STRING), '<<NULL>>') AS sPhone1_normalized,
-              COALESCE(CAST(TRIM(SPHONE2) AS STRING), '<<NULL>>') AS sPhone2_normalized,
-              COALESCE(CAST(TRIM(SPHONE3) AS STRING), '<<NULL>>') AS sPhone3_normalized,
-              COALESCE(CAST(TRIM(SPHONE4) AS STRING), '<<NULL>>') AS sPhone4_normalized,
-              COALESCE(CAST(TRIM(SPHONE5) AS STRING), '<<NULL>>') AS sPhone5_normalized,
-              COALESCE(CAST(TRIM(SPHONE6) AS STRING), '<<NULL>>') AS sPhone6_normalized,
-              COALESCE(CAST(ROUND(CAST(DCLONGITUDE AS NUMBER(38, 2)), 2) AS STRING), '<<NULL>>') AS dcLongitude_normalized,
-              COALESCE(CAST(ROUND(CAST(DCLATITUDE AS NUMBER(38, 2)), 2) AS STRING), '<<NULL>>') AS dcLatitude_normalized,
-              COALESCE(CAST(CASE WHEN BPERMANENT = TRUE THEN '1' WHEN BPERMANENT = FALSE THEN '0' ELSE NULL END AS STRING), '<<NULL>>') AS bPermanent_normalized,
-              COALESCE(CAST(TO_VARCHAR(DDELETED, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>') AS dDeleted_normalized,
-              COALESCE(CAST(TO_VARCHAR(DUPDATED, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>') AS dUpdated_normalized,
-              COALESCE(CAST(TO_VARCHAR(DARCHIVED, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>') AS dArchived_normalized,
-              COALESCE(CAST(CAST(OLDPK AS STRING) AS STRING), '<<NULL>>') AS OldPK_normalized
+          SELECT 
+              COALESCE(CAST(ADDRESSID AS STRING), '<<NULL>>') AS "AddressID_normalized",
+              COALESCE(CAST(SITEID AS STRING), '<<NULL>>') AS "SiteID_normalized",
+              COALESCE(CAST(SMRMRS AS STRING), '<<NULL>>') AS "sMrMrs_normalized",
+              COALESCE(CAST(SFNAME AS STRING), '<<NULL>>') AS "sFName_normalized",
+              COALESCE(CAST(SMI AS STRING), '<<NULL>>') AS "sMI_normalized",
+              COALESCE(CAST(SLNAME AS STRING), '<<NULL>>') AS "sLName_normalized",
+              COALESCE(CAST(SCOMPANY AS STRING), '<<NULL>>') AS "sCompany_normalized",
+              COALESCE(CAST(SADDR1 AS STRING), '<<NULL>>') AS "sAddr1_normalized",
+              COALESCE(CAST(SADDR2 AS STRING), '<<NULL>>') AS "sAddr2_normalized",
+              COALESCE(CAST(SCITY AS STRING), '<<NULL>>') AS "sCity_normalized",
+              COALESCE(CAST(SREGION AS STRING), '<<NULL>>') AS "sRegion_normalized",
+              COALESCE(CAST(SPOSTALCODE AS STRING), '<<NULL>>') AS "sPostalCode_normalized",
+              COALESCE(CAST(SCOUNTRY AS STRING), '<<NULL>>') AS "sCountry_normalized",
+              COALESCE(CAST(SPHONE1 AS STRING), '<<NULL>>') AS "sPhone1_normalized",
+              COALESCE(CAST(SPHONE2 AS STRING), '<<NULL>>') AS "sPhone2_normalized",
+              COALESCE(CAST(SPHONE3 AS STRING), '<<NULL>>') AS "sPhone3_normalized",
+              COALESCE(CAST(SPHONE4 AS STRING), '<<NULL>>') AS "sPhone4_normalized",
+              COALESCE(CAST(SPHONE5 AS STRING), '<<NULL>>') AS "sPhone5_normalized",
+              COALESCE(CAST(SPHONE6 AS STRING), '<<NULL>>') AS "sPhone6_normalized",
+              COALESCE(CAST(DCLONGITUDE AS STRING), '<<NULL>>') AS "dcLongitude_normalized",
+              COALESCE(CAST(DCLATITUDE AS STRING), '<<NULL>>') AS "dcLatitude_normalized",
+              COALESCE(
+                  CASE 
+                      WHEN BPERMANENT = TRUE THEN '1' 
+                      WHEN BPERMANENT = FALSE THEN '0' 
+                      ELSE NULL 
+                  END, 
+                  '<<NULL>>'
+              ) AS "bPermanent_normalized",
+              COALESCE(TO_VARCHAR(DDELETED, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "dDeleted_normalized",
+              COALESCE(TO_VARCHAR(DUPDATED, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "dUpdated_normalized",
+              COALESCE(TO_VARCHAR(DARCHIVED, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "dArchived_normalized",
+              COALESCE(CAST(OLDPK AS STRING), '<<NULL>>') AS "OldPK_normalized"
           FROM DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.ADDRESSES
           WHERE _FIVETRAN_ACTIVE = TRUE;

@@ -1,7 +1,7 @@
 # ============================================================
 # Migration Validator — Dynamic Suite YAML Validation Config
 # Table      : AcctSoftware
-# Generated  : 2026-08-15T01:11:19.976604
+# Generated  : 2026-08-17T11:52:34.380570
 # By         : AI (model: gpt-4o)
 # Checks     : 4 query pair(s)
 #              2 baseline, 2 conditional
@@ -63,8 +63,6 @@ tables:
         source_table_name: AcctSoftware
         source: mssql
         sourcequery: |
-          -- Includes: NULL% + DISTINCT + MIN/MAX
-          -- One scan replaces 3 separate aggregate query types.
           SELECT
               COUNT(*) AS total_rows,
               ROUND(100.0 * SUM(CASE WHEN AcctSoftwareID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS AcctSoftwareID_null_pct,
@@ -87,7 +85,6 @@ tables:
         target_table_name: ACCTSOFTWARE
         target: snowflake
         targetquery: |
-          -- Includes: NULL% + DISTINCT + MIN/MAX
           SELECT
               COUNT(*) AS total_rows,
               ROUND(100.0 * SUM(CASE WHEN ACCTSOFTWAREID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS AcctSoftwareID_null_pct,
@@ -137,6 +134,6 @@ tables:
       # These are not executable blocks — review and adapt manually.
       # [dDeleted_after_dUpdated] Ensure that the deletion timestamp (dDeleted) is not earlier than the last update timestamp (dUpdated).: dDeleted IS NULL OR dDeleted >= dUpdated
       # [OldPK_positive] Ensure that the OldPK column, if present, contains only positive values.: OldPK IS NULL OR OldPK > 0
-      # [sSoftwareName_non_empty] Ensure that the software name column (sSoftwareName) does not contain empty strings.: sSoftwareName <> ''
-      # [dUpdated_not_future] Ensure that the update timestamp (dUpdated) does not contain future dates.: dUpdated <= NOW()
-      # [bPermanent_valid_values] Ensure that the boolean column (bPermanent) contains only valid values (true or false).: bPermanent IN (TRUE, FALSE)
+      # [sSoftwareName_non_empty] Ensure that the software name column (sSoftwareName) contains non-empty values.: sSoftwareName <> ''
+      # [AcctSoftwareID_positive] Ensure that the AcctSoftwareID column contains only positive values.: AcctSoftwareID > 0
+      # [bPermanent_not_null] Ensure that the bPermanent column contains only valid boolean values (true or false).: bPermanent IN (TRUE, FALSE)

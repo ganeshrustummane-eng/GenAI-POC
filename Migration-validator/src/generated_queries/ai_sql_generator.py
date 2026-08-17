@@ -17,9 +17,17 @@ Key Features:
   - Timezone handling per database
   - NULL placeholder insertion
   - Fivetran active record filtering
+  - Self-correcting: dialect-check failures are fed back to the model
+
+AI-only by design
+-----------------
+There is NO rule-based fallback. If AI is unavailable or cannot produce SQL
+that passes dialect validation, generation raises AISQLGenerationError.
+A silently degraded query is more dangerous than a failed run: it yields
+validation results that look authoritative but were never trustworthy.
 
 Environment Variables Required:
-  DIAL_API_KEY      — EPAM DIAL API key
+  DIAL_API_KEY      — EPAM DIAL API key (REQUIRED)
   DIAL_API_BASE     — defaults to https://ai-proxy.lab.epam.com
   DIAL_API_VERSION  — defaults to 2025-04-01-preview
   DIAL_MODEL        — defaults to gpt-4o
@@ -31,17 +39,28 @@ import re
 from typing import List, Optional, Tuple
 from dataclasses import dataclass
 
-from ai_transformation.static_rule_mapper import ColumnRuleMapping
+from ai_transformation.column_mapping import ColumnRuleMapping
 
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-_DEFAULT_API_BASE = "https://ai-proxy.lab.epam.com"
-_DEFAULT_API_VERSION = "2025-04-01-preview"
-_DEFAULT_MODEL = "gpt-4o"
-NULL_PLACEHOLDER = "<<NULL>>"
+_DEFAULT_API_BASE     = "https://ai-proxy.lab.epam.com"
+_DEFAULT_API_VERSION  = "2025-04-01-preview"
+_DEFAULT_DIAL_MODEL   = "gpt-4o"
+_DEFAULT_CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
+NULL_PLACEHOLDER      = "<<NULL>>"
+
+_BACKEND_DIAL   = "dial"
+_BACKEND_CLAUDE = "claude"
+
+# Failed dialect checks are fed back to the model; this caps the correction loop.
+MAX_GENERATION_ATTEMPTS = 3
+
+
+class AISQLGenerationError(RuntimeError):
+    """Raised when AI cannot produce SQL that passes dialect validation."""
 
 
 # ---------------------------------------------------------------------------
@@ -80,10 +99,35 @@ class AISQLQueryGenerator:
             api_version: Azure OpenAI API version
             model      : Model deployment name (e.g. 'gpt-4o', 'gpt-4o-mini')
         """
-        self.api_key = api_key or os.getenv("DIAL_API_KEY", "")
-        self.api_base = api_base or os.getenv("DIAL_API_BASE", _DEFAULT_API_BASE)
-        self.api_version = api_version or os.getenv("DIAL_API_VERSION", _DEFAULT_API_VERSION)
-        self.model = model or os.getenv("DIAL_MODEL", _DEFAULT_MODEL)
+        # Priority 1: EPAM DIAL
+        dial_key   = api_key or os.getenv("DIAL_API_KEY", "")
+        # Priority 2: Claude direct (only when DIAL key absent)
+        claude_key = os.getenv("CLAUDE_API_KEY", "") if not dial_key else ""
+
+        if dial_key:
+            self._backend    = _BACKEND_DIAL
+            self.api_key     = dial_key
+            self.api_base    = api_base    or os.getenv("DIAL_API_BASE",    _DEFAULT_API_BASE)
+            self.api_version = api_version or os.getenv("DIAL_API_VERSION", _DEFAULT_API_VERSION)
+            self.model       = model       or os.getenv("DIAL_MODEL",        _DEFAULT_DIAL_MODEL)
+        elif claude_key:
+            self._backend    = _BACKEND_CLAUDE
+            self.api_key     = claude_key
+            self.api_base    = ""
+            self.api_version = ""
+            # Guard: never send a DIAL/GPT model name to Anthropic API
+            claude_env_model = os.getenv("CLAUDE_MODEL", _DEFAULT_CLAUDE_MODEL)
+            if model and model.lower().startswith("claude-"):
+                self.model = model
+            else:
+                self.model = claude_env_model
+        else:
+            self._backend    = _BACKEND_DIAL
+            self.api_key     = ""
+            self.api_base    = _DEFAULT_API_BASE
+            self.api_version = _DEFAULT_API_VERSION
+            self.model       = model or _DEFAULT_DIAL_MODEL
+
         self._ai_active = bool(self.api_key)
 
     def generate_validation_query(
@@ -99,6 +143,10 @@ class AISQLQueryGenerator:
         """
         Generate a database-specific validation query using AI.
 
+        There is no rule-based fallback. If AI cannot produce SQL that passes
+        dialect validation, this raises — a silently degraded query is worse
+        than no query, because it produces results nobody knows to distrust.
+
         Args:
             schema              : Source schema name
             table               : Source table name
@@ -109,55 +157,281 @@ class AISQLQueryGenerator:
             has_fivetran_active : Whether to include Fivetran filter
 
         Returns:
-            AIGeneratedQuery with the generated SQL and metadata
+            AIGeneratedQuery with validated SQL.
+
+        Raises:
+            AISQLGenerationError: no API key, SDK missing, API unreachable, or
+                                  every attempt failed dialect validation.
         """
         if not self._ai_active:
-            return self._fallback_query(
-                schema, table, mappings, source_db_type, query_type, has_fivetran_active
+            raise AISQLGenerationError(
+                "No AI API key configured — cannot generate validation SQL.\n"
+                "  Set one of the following in .env:\n"
+                "    DIAL_API_KEY=...    (EPAM DIAL — access to GPT/Claude/Gemini)\n"
+                "    CLAUDE_API_KEY=...  (Anthropic direct — no VPN needed)\n"
+                "  Or run: python validate_cli.py  →  choose [8] Configure API key"
             )
 
+        system_prompt = self._build_system_prompt(source_db_type, target_db_type)
+        user_prompt   = self._build_user_prompt(
+            schema, table, mappings, source_db_type, query_type, has_fivetran_active
+        )
+
+        print(
+            f"  [AISQLGenerator] Backend: "
+            f"{'Claude Direct' if self._backend == _BACKEND_CLAUDE else 'EPAM DIAL'}  |  "
+            f"Model: '{self.model}'  |  {schema}.{table} ({query_type})"
+        )
+
+        attempts: List[str] = []
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_prompt},
+        ]
+
+        for attempt in range(1, MAX_GENERATION_ATTEMPTS + 1):
+            raw    = self._call_ai(messages, f"{schema}.{table} ({query_type})", attempt)
+            result = self._parse_response(raw, source_db_type, mappings, query_type)
+
+            if not result.warnings:
+                if attempt > 1:
+                    print(
+                        f"  [AISQLGenerator] {schema}.{table} ({query_type}) "
+                        f"passed validation on attempt {attempt}."
+                    )
+                return result
+
+            attempts.append(f"attempt {attempt}: " + "; ".join(result.warnings))
+            print(
+                f"  [AISQLGenerator] Attempt {attempt}/{MAX_GENERATION_ATTEMPTS} for "
+                f"{schema}.{table} ({query_type}) failed dialect checks: "
+                + "; ".join(result.warnings)
+            )
+            messages = messages + [
+                {"role": "assistant", "content": result.query},
+                {
+                    "role": "user",
+                    "content": (
+                        "That query failed validation for these reasons:\n"
+                        + "\n".join(f"- {w}" for w in result.warnings)
+                        + f"\n\nRewrite it as valid {source_db_type.upper()} SQL that "
+                        "fixes every issue above. Return ONLY the SQL."
+                    ),
+                },
+            ]
+
+        raise AISQLGenerationError(
+            f"AI could not produce valid {source_db_type.upper()} SQL for "
+            f"{schema}.{table} ({query_type}) after {MAX_GENERATION_ATTEMPTS} attempts.\n"
+            + "\n".join(f"  {a}" for a in attempts)
+        )
+
+    def generate_target_validation_query(
+        self,
+        target_fqn: str,
+        mappings: List[ColumnRuleMapping],
+        source_db_type: str,
+        target_db_type: str = "snowflake",
+        has_fivetran_active: bool = False,
+    ) -> AIGeneratedQuery:
+        """
+        Generate the TARGET-side data validation query using AI.
+
+        Generating both sides with AI (rather than AI source + rule-based target)
+        is what keeps the two SELECT lists aligned: the model is given the
+        source aliases and told they must match exactly, so a column can never
+        be compared against the wrong one.
+
+        Args:
+            target_fqn          : Fully qualified target table (db.schema.table)
+            mappings            : Column rule mappings (active only)
+            source_db_type      : Source dialect, for alias context
+            target_db_type      : Target dialect (default: snowflake)
+            has_fivetran_active : Add the active-record filter
+
+        Raises:
+            AISQLGenerationError: same conditions as generate_validation_query.
+        """
+        if not self._ai_active:
+            raise AISQLGenerationError(
+                "No AI API key configured — cannot generate target validation SQL.\n"
+                "  Set DIAL_API_KEY or CLAUDE_API_KEY in .env, "
+                "or run: python validate_cli.py  →  choose [8]"
+            )
+
+        active = [m for m in mappings if not m.skip_validation]
+        columns_json = [
+            {
+                "target_column":    m.target_column,
+                "target_type":      m.target_type,
+                "source_column":    m.source_column,
+                "source_type":      m.source_type,
+                "required_alias":   f"{m.source_column}_normalized",
+                "rule":             m.rule.rule_name,
+            }
+            for m in active
+        ]
+
+        fivetran_note = (
+            "\nThe query MUST include: WHERE _FIVETRAN_ACTIVE = TRUE"
+            if has_fivetran_active
+            else ""
+        )
+
+        system_prompt = self._build_system_prompt(source_db_type, target_db_type)
+        user_prompt = f"""Generate a {target_db_type.upper()} SQL query for: {target_fqn}
+
+Query Type: SELECT normalized columns for row-by-row comparison against the
+{source_db_type.upper()} source. The two result sets are compared positionally
+AND by alias, so the aliases below are non-negotiable.
+
+Columns ({len(columns_json)} total, in this exact order):
+{json.dumps(columns_json, indent=2)}
+
+Requirements:
+1. SELECT the columns in exactly the order listed above.
+2. Read from the column named in "target_column".
+3. Alias each expression with EXACTLY the string in "required_alias" — same
+   spelling and same case. Quote the alias with double quotes so
+   {target_db_type.upper()} preserves the case verbatim.
+4. Wrap every expression: COALESCE(CAST(expression AS {self._get_text_type(target_db_type)}), '{NULL_PLACEHOLDER}')
+5. Timestamps: {self._get_format_function(target_db_type)}
+6. Booleans: CASE WHEN col = TRUE THEN '1' WHEN col = FALSE THEN '0' ELSE NULL END
+7. Apply the same normalization semantics the source side uses, so equal data
+   produces byte-identical strings on both sides.{fivetran_note}
+
+Generate the complete SELECT query now:
+"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_prompt},
+        ]
+        attempts: List[str] = []
+
+        for attempt in range(1, MAX_GENERATION_ATTEMPTS + 1):
+            raw    = self._call_ai(messages, f"target:{target_fqn}", attempt)
+            result = self._parse_response(raw, target_db_type, active, "data_validation")
+            if not result.warnings:
+                return result
+
+            attempts.append(f"attempt {attempt}: " + "; ".join(result.warnings))
+            print(
+                f"  [AISQLGenerator] Target attempt {attempt}/{MAX_GENERATION_ATTEMPTS} "
+                f"for {target_fqn} failed checks: " + "; ".join(result.warnings)
+            )
+            messages = messages + [
+                {"role": "assistant", "content": result.query},
+                {
+                    "role": "user",
+                    "content": (
+                        "That query failed validation for these reasons:\n"
+                        + "\n".join(f"- {w}" for w in result.warnings)
+                        + f"\n\nRewrite it as valid {target_db_type.upper()} SQL that "
+                        "fixes every issue. Return ONLY the SQL."
+                    ),
+                },
+            ]
+
+        raise AISQLGenerationError(
+            f"AI could not produce valid {target_db_type.upper()} SQL for "
+            f"{target_fqn} after {MAX_GENERATION_ATTEMPTS} attempts.\n"
+            + "\n".join(f"  {a}" for a in attempts)
+        )
+
+    # -----------------------------------------------------------------------
+    # Backend dispatch helpers
+    # -----------------------------------------------------------------------
+
+    def _call_ai(self, messages: list, context: str, attempt: int) -> str:
+        """Dispatch to the correct backend (DIAL or Claude direct)."""
+        if self._backend == _BACKEND_CLAUDE:
+            return self._call_claude(messages, context, attempt)
+        return self._call_dial(messages, context, attempt)
+
+    def _call_dial(self, messages: list, context: str, attempt: int) -> str:
+        """Call EPAM DIAL via AzureOpenAI SDK."""
         try:
             from openai import AzureOpenAI
-        except ImportError:
-            return self._fallback_query(
-                schema, table, mappings, source_db_type, query_type, has_fivetran_active
-            )
-
+        except ImportError as exc:
+            raise AISQLGenerationError(
+                "The 'openai' package is required for DIAL SQL generation.\n"
+                "Install it with: pip install -r requirements.txt"
+            ) from exc
         client = AzureOpenAI(
             api_key=self.api_key,
             api_version=self.api_version,
             azure_endpoint=self.api_base,
         )
-
-        system_prompt = self._build_system_prompt(source_db_type, target_db_type)
-        user_prompt = self._build_user_prompt(
-            schema, table, mappings, source_db_type, query_type, has_fivetran_active
-        )
-
         try:
             response = client.chat.completions.create(
                 model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
+                messages=messages,
                 temperature=0,
                 extra_headers={"Api-Key": self.api_key},
             )
-            raw = response.choices[0].message.content
-            result = self._parse_response(raw, source_db_type, mappings, query_type)
-            if result.warnings:
-                print("  [AISQLGenerator] AI response failed SQL checks — using fallback")
-                return self._fallback_query(
-                    schema, table, mappings, source_db_type, query_type, has_fivetran_active
-                )
-            return result
-
+            return response.choices[0].message.content or ""
         except Exception as exc:
-            print(f"  [AISQLGenerator] AI error: {exc} — using fallback query")
-            return self._fallback_query(
-                schema, table, mappings, source_db_type, query_type, has_fivetran_active
+            raise AISQLGenerationError(
+                f"DIAL API call failed for {context} "
+                f"on attempt {attempt}/{MAX_GENERATION_ATTEMPTS}: {exc}"
+            ) from exc
+
+    def _call_claude(self, messages: list, context: str, attempt: int) -> str:
+        """
+        Call Anthropic Claude directly.
+        Converts OpenAI-style messages list to Anthropic format.
+        """
+        try:
+            import anthropic  # type: ignore
+        except ImportError as exc:
+            raise AISQLGenerationError(
+                "The 'anthropic' package is required for Claude direct SQL generation.\n"
+                "Install it with: pip install anthropic"
+            ) from exc
+
+        client = anthropic.Anthropic(api_key=self.api_key)
+
+        # Extract system prompt and conversation messages
+        system_content = ""
+        conv_messages  = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_content = msg["content"]
+            else:
+                conv_messages.append({"role": msg["role"], "content": msg["content"]})
+
+        try:
+            response = client.messages.create(
+                model=self.model,
+                max_tokens=4096,
+                system=system_content,
+                messages=conv_messages,
             )
+        except Exception as exc:
+            raise AISQLGenerationError(
+                f"Claude API call failed for {context} "
+                f"on attempt {attempt}/{MAX_GENERATION_ATTEMPTS}: {exc}"
+            ) from exc
+
+        raw = ""
+        for block in response.content:
+            if hasattr(block, "text"):
+                raw += block.text
+
+        # Strip markdown fences if Claude wrapped SQL in ```sql ... ```
+        raw = raw.strip()
+        if raw.startswith("```"):
+            lines = raw.splitlines()
+            raw   = "\n".join(
+                line for line in lines
+                if not line.strip().startswith("```")
+            ).strip()
+        return raw
+
+    # -----------------------------------------------------------------------
+    # Prompt builders
+    # -----------------------------------------------------------------------
 
     def _build_system_prompt(self, source_db: str, target_db: str) -> str:
         """Build the system prompt with database-specific instructions."""
@@ -401,35 +675,3 @@ Generate the complete SELECT query now:
             if re.search(r"\)\s+\w+\s*\(", query, re.I):
                 warnings.append("SELECT expressions may be missing commas")
         return warnings
-
-    def _fallback_query(
-        self,
-        schema: str,
-        table: str,
-        mappings: List[ColumnRuleMapping],
-        source_db_type: str,
-        query_type: str,
-        has_fivetran_active: bool,
-    ) -> AIGeneratedQuery:
-        """Generate a basic fallback query when AI is unavailable."""
-        # Use the existing rule-based approach
-        select_lines = []
-        for m in mappings:
-            if not m.skip_validation:
-                expr = m.rule.apply_source(
-                    source_db_type,
-                    m.source_column,
-                    alias=f"{m.source_column}_normalized",
-                )
-                select_lines.append(f"    {expr}")
-
-        cols = ",\n".join(select_lines)
-        query = f"SELECT\n{cols}\nFROM {schema}.{table};"
-
-        return AIGeneratedQuery(
-            query=query,
-            database_type=source_db_type,
-            explanation="Rule-based fallback query (AI unavailable)",
-            confidence=0.8,
-            warnings=["Using rule-based fallback - AI was not available"],
-        )

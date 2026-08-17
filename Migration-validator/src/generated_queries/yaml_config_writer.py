@@ -68,7 +68,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional
 
-from ai_transformation.static_rule_mapper import ColumnRuleMapping
+import yaml
+
+from ai_transformation.column_mapping import ColumnRuleMapping
 from generated_queries.sql_query_generator import ValidationQuerySet, _plan_to_rule_mappings
 
 if TYPE_CHECKING:
@@ -189,12 +191,16 @@ class YAMLConfigWriter:
         output_dir: Optional[Path] = None,
     ) -> Path:
         """
-        Append this table's count_validation block to the shared
+        Upsert this table's count_validation block into the shared
         config/bronze/count_validation/bronze.yaml.
 
-        All tables share one file; each table is a top-level key under 'tables:'.
-        The file is created on first write (with the 'tables:' header) and
-        subsequent tables are appended without duplicating the header.
+        Idempotent by construction: the existing file is parsed, this table's
+        key is replaced (not appended), and the whole document is rewritten.
+        Regenerating the same table N times yields byte-identical output.
+
+        The previous implementation appended raw text, so a second run produced
+        a duplicate top-level key. YAML resolves duplicates by last-wins, which
+        meant the file silently disagreed with itself about what would run.
 
         Returns:
             Path to the bronze.yaml file.
@@ -203,44 +209,43 @@ class YAMLConfigWriter:
         out_dir.mkdir(parents=True, exist_ok=True)
         yaml_path = out_dir / "bronze.yaml"
 
-        def _prep(sql: str) -> str:
-            return _indent_for_yaml(_strip_generator_header(sql), _QUERY_INDENT)
+        block = {
+            "validations": {
+                "count_validation": {
+                    "source_table_name": pg_table,
+                    "source": source_db_type,
+                    "sourcequery": _strip_generator_header(query_set.row_count_source) + "\n",
+                    "target_table_name": sf_table or pg_table,
+                    "target": "snowflake",
+                    "targetquery": _strip_generator_header(query_set.row_count_target) + "\n",
+                }
+            }
+        }
 
-        entry_lines = [
-            f"  {pg_table}:",
-            "    validations:",
-            "      count_validation:",
-            f"        source_table_name: {pg_table}",
-            f"        source: {source_db_type}",
-            "        sourcequery: |",
-            _prep(query_set.row_count_source),
-            f"        target_table_name: {pg_table}",
-            "        target: snowflake",
-            "        targetquery: |",
-            _prep(query_set.row_count_target),
+        document = _load_yaml_document(yaml_path)
+        tables = document.setdefault("tables", {})
+        action = "updated" if pg_table in tables else "added"
+        tables[pg_table] = block
+
+        header = [
+            "# ============================================================",
+            "# Migration Validator — Bronze Count Validation",
+            "# Contains   : row count checks for all Bronze tables.",
+            "#",
+            "# GENERATED FILE — do not hand-edit.",
+            "# Rendered from the canonical validation plans in output/plans/.",
+            "# Re-running generation upserts each table in place; it never appends.",
+            "#",
+            "# No generation timestamp is recorded here on purpose: this file is",
+            "# shared by every table, so a timestamp would make each run produce a",
+            "# diff even when nothing changed. Per-table provenance (when, which",
+            "# model) lives in the plan JSON.",
+            "# ============================================================",
             "",
         ]
+        _dump_yaml_document(yaml_path, document, header)
 
-        if yaml_path.exists():
-            with open(yaml_path, "a", encoding="utf-8") as f:
-                f.write("\n".join(entry_lines) + "\n")
-        else:
-            header_lines = [
-                "# ============================================================",
-                "# Migration Validator — Bronze Count Validation",
-                f"# Generated  : {query_set.generated_at}",
-                "# Contains    : row count checks for all Bronze tables.",
-                "# Add tables  : re-run 'validate_cli.py multi' for more tables.",
-                "# ============================================================",
-                "",
-                "tables:",
-                "",
-            ]
-            with open(yaml_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(header_lines))
-                f.write("\n".join(entry_lines) + "\n")
-
-        print(f"  📋 Count YAML appended : {yaml_path.resolve()}  ({pg_table})")
+        print(f"  📋 Count YAML {action:<7}: {yaml_path.resolve()}  ({pg_table})")
         return yaml_path
 
     def write_count_yaml_from_plan(
@@ -504,36 +509,101 @@ def _build_data_yaml(
 
 
 # ---------------------------------------------------------------------------
+# YAML document helpers — idempotent upsert support
+# ---------------------------------------------------------------------------
+
+class _LiteralStr(str):
+    """A string that always serialises as a YAML literal block scalar (|)."""
+
+
+def _literal_representer(dumper, data):
+    return dumper.represent_scalar("tag:yaml.org,2002:str", str(data), style="|")
+
+
+yaml.add_representer(_LiteralStr, _literal_representer, Dumper=yaml.SafeDumper)
+
+
+def _load_yaml_document(path: Path) -> dict:
+    """
+    Read an existing generated YAML file, tolerating absence.
+
+    A malformed file is treated as empty rather than fatal: it is a render
+    target that this writer is about to overwrite, so refusing to proceed
+    would strand the user with a file only this code can repair.
+    """
+    if not path.exists():
+        return {}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            loaded = yaml.safe_load(handle)
+    except yaml.YAMLError as exc:
+        print(f"  [YAMLConfigWriter] {path.name} was unparseable ({exc}); rebuilding it.")
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _dump_yaml_document(path: Path, document: dict, header_lines: List[str]) -> None:
+    """Write a YAML document with a comment header, SQL as literal blocks."""
+    normalized = _mark_sql_literals(document)
+    body = yaml.safe_dump(
+        normalized,
+        default_flow_style=False,
+        sort_keys=False,
+        width=10_000,
+        allow_unicode=True,
+    )
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(header_lines))
+        handle.write("\n")
+        handle.write(body)
+
+
+def _mark_sql_literals(node):
+    """Recursively tag *query fields so they round-trip as readable SQL blocks."""
+    if isinstance(node, dict):
+        return {
+            key: (
+                _LiteralStr(value)
+                if isinstance(key, str)
+                and key.endswith("query")
+                and isinstance(value, str)
+                else _mark_sql_literals(value)
+            )
+            for key, value in node.items()
+        }
+    if isinstance(node, list):
+        return [_mark_sql_literals(item) for item in node]
+    return node
+
+
+# ---------------------------------------------------------------------------
 # SQL helpers
 # ---------------------------------------------------------------------------
 
 def _strip_generator_header(sql: str) -> str:
     """
-    Strip ONLY the single leading generator comment from a SQL string.
+    Strip the leading generator comment lines from a SQL string.
 
-    The SQLQueryGenerator prefixes each query section with exactly one
-    comment line like:
-        -- ③ SOURCE: PostgreSQL (public.events)
+    SQLQueryGenerator prefixes each query with one or more comment lines:
+        -- ③ SOURCE: MSSQL (dbo.AcctSoftware)
+        -- AI-generated (gpt-4o, confidence 0.95)
 
-    We remove only that first comment line so the YAML sourcequery/targetquery
-    contains clean, runnable SQL.  All other lines (including any inline
-    comments within the SELECT body) are preserved.
+    All leading '--' lines are removed so the YAML sourcequery/targetquery
+    holds clean, runnable SQL. Comments inside the SELECT body are preserved.
 
     Args:
-        sql: SQL string that may begin with one '-- ...' header comment
+        sql: SQL string that may begin with header comment lines
 
     Returns:
-        Clean SQL without the leading single comment header line.
+        Clean SQL without the leading comment header.
     """
     if not sql:
         return "SELECT 1;"
 
     lines = sql.strip().splitlines()
-    # Remove ONLY the first line if it is the generator header comment
-    if lines and lines[0].strip().startswith("--"):
+    while lines and lines[0].strip().startswith("--"):
         lines = lines[1:]
 
-    # Strip any leading blank lines left after header removal
     while lines and not lines[0].strip():
         lines = lines[1:]
 
