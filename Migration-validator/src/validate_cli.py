@@ -89,7 +89,7 @@ def _banner():
 {_C.CYAN}{_C.BOLD}
 ╔══════════════════════════════════════════════════════════════════╗
 ║      Migration Validator  —  AI Query Generator                 ║
-║      PostgreSQL / MSSQL  →  Snowflake  Data Completeness        ║
+║      PostgreSQL / MSSQL / Athena  →  Snowflake  Completeness   ║
 ╚══════════════════════════════════════════════════════════════════╝{_C.RESET}""")
 
 
@@ -135,6 +135,39 @@ def _normalize_db_type(raw: str) -> str:
 # Each profile stores one (source + snowflake target) connection set so the
 # user can skip re-entering credentials on every run.
 # ─────────────────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STATIC COLUMN EXCLUSION LIST
+# These columns are always excluded from validation regardless of user input.
+# Fivetran audit columns, CDC metadata, and other system-injected columns that
+# are never present on the source side or carry no migration-relevant data.
+# ─────────────────────────────────────────────────────────────────────────────
+
+STATIC_EXCLUDE_COLUMNS: list = [
+    # Fivetran metadata
+    "_fivetran_synced",
+    "_fivetran_deleted",
+    "_fivetran_id",
+    "_fivetran_index",
+    "_fivetran_start",
+    "_fivetran_end",
+    "_fivetran_active",
+    # Common audit / CDC columns injected at load time
+    "etl_insert_dt",
+    "etl_update_dt",
+    "etl_batch_id",
+    "dw_insert_dt",
+    "dw_update_dt",
+    "dw_batch_id",
+    "load_dt",
+    "load_ts",
+    "created_at_dw",
+    "updated_at_dw",
+    "record_source",
+    "hash_diff",
+    "dv_load_dt",
+    "dv_record_source",
+]
 
 _PROFILES_PATH = Path.home() / ".migration-validator" / "profiles.json"
 
@@ -516,9 +549,16 @@ def cmd_generate(args):
     current_model = getattr(args, "model", None) or os.getenv("DIAL_MODEL", "gpt-4o")
     rec = None  # set when user picks a source connection interactively
 
-    # Parse --exclude  →  list[str]  or  []
+    # Parse --exclude  →  merge user list with static exclusions (case-insensitive dedup)
     exclude_raw  = getattr(args, "exclude", None) or ""
-    exclude_cols = [c.strip() for c in exclude_raw.split(",") if c.strip()] if exclude_raw else []
+    user_exclude = [c.strip().lower() for c in exclude_raw.split(",") if c.strip()] if exclude_raw else []
+    static_lower = [c.lower() for c in STATIC_EXCLUDE_COLUMNS]
+    seen = set()
+    exclude_cols = []
+    for c in static_lower + user_exclude:
+        if c not in seen:
+            seen.add(c)
+            exclude_cols.append(c)
 
     # ── Connection profile fast-path: --connection-profile <name> ────────────
     profile_name = getattr(args, "connection_profile", None)
@@ -618,7 +658,14 @@ def cmd_generate(args):
         if os.getenv("DIAL_API_KEY")
         else f"{_C.YELLOW}⚠ Not active — static fallback{_C.RESET}"
     )
-    excl_str = f"\n    Excluded    : {_C.YELLOW}{', '.join(exclude_cols)}{_C.RESET}" if exclude_cols else ""
+    if exclude_cols:
+        user_extra = [c for c in exclude_cols if c not in static_lower]
+        excl_str = (
+            f"\n    Static excl : {_C.DIM}{', '.join(STATIC_EXCLUDE_COLUMNS[:5])} …({len(STATIC_EXCLUDE_COLUMNS)} total){_C.RESET}"
+            + (f"\n    Also excl   : {_C.YELLOW}{', '.join(user_extra)}{_C.RESET}" if user_extra else "")
+        )
+    else:
+        excl_str = ""
     print(f"""
   {_C.BOLD}Validation Plan:{_C.RESET}
     Source      : {_C.GREEN}{src_label}.{pg_table}{_C.RESET}
@@ -659,10 +706,6 @@ def cmd_generate(args):
             exclude_columns=exclude_cols or None,
         )
         _show_output_summary(result, pg_database=pg_database)
-        # Offer to save connection as a reusable profile (only when not already using one)
-        if rec is not None and not profile_name:
-            _save_session_as_profile(rec, sf_database or os.getenv("SNOWFLAKE_DATABASE", ""),
-                                     sf_schema or os.getenv("SNOWFLAKE_SCHEMA", ""))
 
     except Exception as exc:
         _err(f"Generation failed: {exc}")
@@ -874,12 +917,9 @@ def _show_output_summary(result, pg_database: str = "") -> None:
     print(f"  {_C.BOLD}Fivetran filter:{_C.RESET} {fivetran_str}")
 
     print(f"\n  {_C.BOLD}Output files:{_C.RESET}")
-    print(f"    {_C.GREEN}💾 SQL         :{_C.RESET}  {result.sql_path}")
     if getattr(result, "count_yaml_path", None):
-        print(f"    {_C.CYAN}📋 Count YAML  :{_C.RESET}  {result.count_yaml_path}")
-    print(f"    {_C.CYAN}📋 Full YAML   :{_C.RESET}  {result.yaml_path}")
-    if getattr(result, "dynamic_suite_path", None):
-        print(f"    {_C.GREEN}💾 Dynamic SQL  :{_C.RESET}  {result.dynamic_suite_path}")
+        print(f"    {_C.CYAN}📋 Count YAML   :{_C.RESET}  {result.count_yaml_path}")
+    print(f"    {_C.CYAN}📋 Full YAML    :{_C.RESET}  {result.yaml_path}")
     if getattr(result, "dynamic_suite_yaml_path", None):
         print(f"    {_C.CYAN}📋 Dynamic YAML :{_C.RESET}  {result.dynamic_suite_yaml_path}")
 
@@ -894,27 +934,10 @@ def _show_output_summary(result, pg_database: str = "") -> None:
     print(f"    ⑧ Distinct values per column — Snowflake")
     print(f"    Use _count.yaml for row-count-only runners")
     print(f"    Use _validation.yaml for full column validation runners")
-    if getattr(result, "dynamic_suite_path", None):
+    if getattr(result, "dynamic_suite_yaml_path", None):
         print(f"\n  {_C.BOLD}Dynamic suite (schema-aware conditional checks):{_C.RESET}")
-        print(f"    Open the Dynamic SQL file for column-type-specific checks:")
         print(f"    MIN/MAX, SUM (financial), DUPLICATE checks, VALUE_DIST, AI business rules")
     _sep("═")
-
-    # ── Offer to execute queries in terminal ──────────────────────────────────
-    print(f"\n  {_C.BOLD}Execute queries now in the terminal?{_C.RESET}")
-    print(f"    {_C.GREEN}[y]{_C.RESET}  Execute ALL queries and show results")
-    print(f"    {_C.CYAN}[s]{_C.RESET}  Execute SELECT queries (row counts + validation)")
-    print(f"    {_C.DIM}[n]{_C.RESET}  Skip — I'll run them manually")
-    print()
-
-    choice = input("  Choice [y/s/N]: ").strip().lower()
-    if choice in ("y", "yes"):
-        _run_queries_terminal(result, pg_database=pg_database, mode="all")
-    elif choice in ("s", "select"):
-        _run_queries_terminal(result, pg_database=pg_database, mode="counts_only")
-    else:
-        _dim("Skipped. Open the SQL file to run queries manually.")
-    print()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1607,10 +1630,10 @@ def _pick_table_from_source(rec: dict) -> str:
 
 def _pick_snowflake_target() -> tuple:
     """
-    Interactively select a Snowflake account, database, and schema.
-    Returns (sf_database, sf_schema) and propagates all selections into
-    os.environ so that every subsequent SnowflakeExtractor call picks them up
-    without needing to edit .env.
+    Select Snowflake account, database, and schema.
+    When all credentials are already in .env, bypass interactive prompts and use
+    them directly. Only asks interactively for fields that are missing.
+    Returns (sf_database, sf_schema) and propagates into os.environ.
     """
     _head("SELECT SNOWFLAKE TARGET")
 
@@ -1620,15 +1643,20 @@ def _pick_snowflake_target() -> tuple:
     default_password = os.getenv("SNOWFLAKE_PASSWORD",  "")
     default_db       = os.getenv("SNOWFLAKE_DATABASE",  "")
     default_schema   = os.getenv("SNOWFLAKE_SCHEMA",    "")
+    sf_warehouse     = os.getenv("SNOWFLAKE_WAREHOUSE", "")
+    sf_role          = os.getenv("SNOWFLAKE_ROLE", "")
 
-    print(f"  {_C.DIM}Current .env account : {default_account}{_C.RESET}")
-    print(f"  {_C.DIM}Current .env database: {default_db}.{default_schema}{_C.RESET}\n")
-
-    sf_account  = _prompt("Snowflake account",  default_account ).strip() or default_account
-    sf_username = _prompt("Snowflake username", default_username).strip() or default_username
-    sf_password = _prompt("Snowflake password", default_password).strip() or default_password
-    sf_warehouse = os.getenv("SNOWFLAKE_WAREHOUSE", "")
-    sf_role      = os.getenv("SNOWFLAKE_ROLE", "")
+    # Bypass credential prompts when .env already has everything
+    if default_account and default_username and default_password:
+        sf_account  = default_account
+        sf_username = default_username
+        sf_password = default_password
+        _ok(f"Using Snowflake credentials from .env  ({sf_account})")
+    else:
+        print(f"  {_C.DIM}Current .env account : {default_account}{_C.RESET}")
+        sf_account  = _prompt("Snowflake account",  default_account ).strip() or default_account
+        sf_username = _prompt("Snowflake username", default_username).strip() or default_username
+        sf_password = _prompt("Snowflake password", default_password).strip() or default_password
 
     # ── Step 2: live database discovery ──────────────────────────────────────
     databases = []
@@ -1981,7 +2009,7 @@ def _run_parameterized_tables(args, current_model: str, exclude_cols: list) -> N
             )
             results.append((src_table, sf_table, result))
             succeeded += 1
-            _ok(f"Generated: {result.sql_path.name}  +  {result.yaml_path.name}")
+            _ok(f"Generated: {result.yaml_path.name}")
         except Exception as exc:
             results.append((src_table, sf_table, exc))
             failed += 1
@@ -2002,7 +2030,7 @@ def _run_parameterized_tables(args, current_model: str, exclude_cols: list) -> N
         if isinstance(r, Exception):
             print(f"  {_C.RED}✗{_C.RESET}  {src_table:<30}  error: {r}")
         else:
-            print(f"  {_C.GREEN}✓{_C.RESET}  {src_table:<30}  SQL: {r.sql_path.name}")
+            print(f"  {_C.GREEN}✓{_C.RESET}  {src_table:<30}  YAML: {r.yaml_path.name}")
 
     print()
     _sep("═")
@@ -2281,7 +2309,7 @@ def cmd_multi_db(args):
     Outputs per table:
       config/bronze/count_validation/bronze_count_validation.yaml  ← row count (shared)
       config/bronze/data_validation/<table>_validation.yaml        ← column-level validation
-      validation_sql/<table>_validation.sql                        ← all 8 SQL queries
+      config/bronze/data_validation/<table>_dynamic_suite.yaml     ← schema-aware checks
     """
     from validation_pipeline import ValidationPipeline
     from sql_extractor import SnowflakeExtractor
@@ -2464,7 +2492,6 @@ def cmd_multi_db(args):
             )
             results.append((src_table, sf_table, result))
             succeeded += 1
-            _ok(f"SQL  : {result.sql_path.name}")
             if getattr(result, "count_yaml_path", None):
                 _ok(f"Count YAML  : {result.count_yaml_path.name}")
             _ok(f"Full YAML   : {result.yaml_path.name}")
@@ -2502,8 +2529,8 @@ def cmd_multi_db(args):
     _sep("═")
 
     # Offer to save connection as a reusable profile
-    if not profile_name and rec is not None:
-        _save_session_as_profile(rec, sf_database, sf_schema)
+    # if not profile_name and rec is not None:
+    #     _save_session_as_profile(rec, sf_database, sf_schema)
 
 
 def _blank():

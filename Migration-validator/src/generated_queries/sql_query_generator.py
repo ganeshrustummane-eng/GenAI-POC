@@ -36,12 +36,14 @@ Generated queries (no PK dependency — PKs deferred to future milestone):
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional  # noqa: F401 (Optional used in generate())
 
 from ai_transformation.static_rule_mapper import ColumnRuleMapping
 from rules import get_rule_for_type
+from generated_queries.ai_sql_generator import AISQLQueryGenerator, AIGeneratedQuery
 
 if TYPE_CHECKING:
     from core.validation_plan import CanonicalValidationPlan, ColumnMappingEntry
@@ -122,6 +124,17 @@ class SQLQueryGenerator:
     """
     Builds all validation SQL from a ColumnRuleMapping list.
 
+    Multi-Database Support
+    ----------------------
+    Automatically generates database-specific SQL for:
+      - MS SQL Server (mssql, sqlserver)
+      - PostgreSQL (postgres, postgresql)
+      - Athena (athena, trino, presto)
+      - Snowflake (snowflake)
+
+    Uses AI-powered generation when DIAL_API_KEY is set, falls back to
+    rule-based generation otherwise.
+
     PK-Free Design
     --------------
     Primary key handling is deferred to a future milestone.
@@ -131,7 +144,7 @@ class SQLQueryGenerator:
     NULL Handling
     -------------
     COALESCE(CAST(expr AS TEXT/STRING), '<<NULL>>') is applied to EVERY
-    column via the rule's apply_postgresql() / apply_snowflake() methods.
+    column via the rule's apply_source() / apply_snowflake() methods.
 
     Fivetran Filter
     ---------------
@@ -141,6 +154,27 @@ class SQLQueryGenerator:
     """
 
     NULL_PLACEHOLDER = "<<NULL>>"
+
+    def __init__(self, use_ai: bool = True, ai_model: Optional[str] = None):
+        """
+        Initialize SQL Query Generator.
+
+        Args:
+            use_ai    : If True, use AI-powered generation when available (default: True)
+            ai_model  : AI model to use (e.g. 'gpt-4o', 'gpt-4o-mini', 'claude-3-5-sonnet')
+        """
+        self._use_ai = use_ai
+        self._ai_generator = None
+
+        if use_ai:
+            try:
+                self._ai_generator = AISQLQueryGenerator(model=ai_model)
+                if self._ai_generator._ai_active:
+                    print(f"  [SQLQueryGenerator] AI-powered generation enabled (model: {self._ai_generator.model})")
+                else:
+                    print("  [SQLQueryGenerator] AI unavailable — using rule-based generation")
+            except Exception as e:
+                print(f"  [SQLQueryGenerator] AI initialization failed: {e} — using rule-based generation")
 
     def generate(
         self,
@@ -155,6 +189,7 @@ class SQLQueryGenerator:
         model_used: str = "N/A",
         primary_keys: Optional[List[str]] = None,
         target_primary_keys: Optional[List[str]] = None,
+        source_db_type: str = "postgresql",
     ) -> ValidationQuerySet:
         """
         Generate all validation queries for the given table pair.
@@ -179,6 +214,10 @@ class SQLQueryGenerator:
         pks    = primary_keys or []
         tgt_pks = target_primary_keys or pks  # default to same names when not specified
 
+        # Resolve source dialect. Explicit arg wins; fall back to env for
+        # backward compatibility with callers that set SOURCE_TYPE.
+        src_type = (source_db_type or os.getenv("SOURCE_TYPE", "postgresql")).strip().lower()
+
         sf_full = (
             f"{sf_database}.{sf_schema}.{sf_table}"
             if sf_database
@@ -187,20 +226,20 @@ class SQLQueryGenerator:
 
         qs = ValidationQuerySet(
             table_name=pg_table,
-            source_db_label=f"postgresql://{pg_schema}.{pg_table}",
+            source_db_label=f"{src_type}://{pg_schema}.{pg_table}",
             target_db_label=f"snowflake://{sf_full}",
             generated_by=generated_by,
             model_used=model_used,
             primary_keys=pks,
         )
 
-        qs.row_count_source       = self._row_count_pg(pg_schema, pg_table)
+        qs.row_count_source       = self._row_count_pg(pg_schema, pg_table, src_type)
         qs.row_count_target       = self._row_count_sf(sf_full, has_fivetran_active)
-        qs.main_validation_source = self._main_validation_pg(pg_schema, pg_table, active)
+        qs.main_validation_source = self._main_validation_pg(pg_schema, pg_table, active, src_type)
         qs.main_validation_target = self._main_validation_sf(sf_full, active, has_fivetran_active)
-        qs.null_pct_source        = self._null_pct_pg(pg_schema, pg_table, active)
+        qs.null_pct_source        = self._null_pct_pg(pg_schema, pg_table, active, src_type)
         qs.null_pct_target        = self._null_pct_sf(sf_full, active, has_fivetran_active)
-        qs.distinct_count_source  = self._distinct_count_pg(pg_schema, pg_table, active)
+        qs.distinct_count_source  = self._distinct_count_pg(pg_schema, pg_table, active, src_type)
         qs.distinct_count_target  = self._distinct_count_sf(sf_full, active, has_fivetran_active)
 
         if pks:
@@ -208,7 +247,7 @@ class SQLQueryGenerator:
             qs.pk_duplicate_target = self._pk_duplicate_sf(sf_full, tgt_pks, has_fivetran_active)
             qs.pk_missing_rows     = self._pk_missing_rows(pg_schema, pg_table, pks, sf_full, tgt_pks, has_fivetran_active)
             qs.pk_orphan_rows      = self._pk_orphan_rows(pg_schema, pg_table, pks, sf_full, tgt_pks, has_fivetran_active)
-            qs.pk_ordered_source   = self._pk_ordered_pg(pg_schema, pg_table, active, pks)
+            qs.pk_ordered_source   = self._pk_ordered_pg(pg_schema, pg_table, active, pks, src_type)
             qs.pk_ordered_target   = self._pk_ordered_sf(sf_full, active, tgt_pks, has_fivetran_active)
         else:
             qs.pk_warning = (
@@ -246,15 +285,17 @@ class SQLQueryGenerator:
             model_used=plan.model_used,
             primary_keys=plan.source_primary_keys,
             target_primary_keys=plan.target_primary_keys,
+            source_db_type=plan.source_db_type,
         )
 
     # -----------------------------------------------------------------------
     # ① Row Count — PostgreSQL
     # -----------------------------------------------------------------------
 
-    def _row_count_pg(self, schema: str, table: str) -> str:
+    def _row_count_pg(self, schema: str, table: str, src_type: str = "postgresql") -> str:
+        label = _source_label(src_type)
         return (
-            f"-- ① ROW COUNT: PostgreSQL ({schema}.{table})\n"
+            f"-- ① ROW COUNT: {label} ({schema}.{table})\n"
             f"SELECT COUNT(*) AS source_row_count\n"
             f"FROM {schema}.{table};"
         )
@@ -272,7 +313,7 @@ class SQLQueryGenerator:
         )
 
     # -----------------------------------------------------------------------
-    # ③ Main Validation — PostgreSQL (normalised SELECT, no PK ORDER BY)
+    # ③ Main Validation — Source (normalised SELECT, no PK ORDER BY)
     # -----------------------------------------------------------------------
 
     def _main_validation_pg(
@@ -280,17 +321,43 @@ class SQLQueryGenerator:
         schema: str,
         table: str,
         mappings: List[ColumnRuleMapping],
+        src_type: str = "postgresql",
     ) -> str:
+        label = _source_label(src_type)
         if not mappings:
             return (
-                f"-- ③ SOURCE: PostgreSQL ({schema}.{table})\n"
+                f"-- ③ SOURCE: {label} ({schema}.{table})\n"
                 f"-- No comparable columns found.\n"
                 f"SELECT 1;"
             )
 
+        # Try AI-powered generation first
+        if self._use_ai and self._ai_generator and self._ai_generator._ai_active:
+            try:
+                result = self._ai_generator.generate_validation_query(
+                    schema=schema,
+                    table=table,
+                    mappings=mappings,
+                    source_db_type=src_type,
+                    query_type="data_validation",
+                    has_fivetran_active=False,
+                )
+                if result.confidence > 0.7 and not result.warnings:
+                    # AI generated valid query
+                    return f"-- ③ SOURCE: {label} ({schema}.{table})\n-- AI-generated query (confidence: {result.confidence:.2f})\n{result.query}"
+                else:
+                    print(f"  [SQLQueryGenerator] AI confidence low ({result.confidence:.2f}) or warnings present — using rule-based fallback")
+                    if result.warnings:
+                        for warning in result.warnings:
+                            print(f"    WARNING: {warning}")
+            except Exception as e:
+                print(f"  [SQLQueryGenerator] AI generation failed: {e} — using rule-based fallback")
+
+        # Fallback to rule-based generation
         select_lines = []
         for m in mappings:
-            expr = m.rule.apply_postgresql(
+            expr = m.rule.apply_source(
+                src_type,
                 m.source_column,
                 alias=f"{m.source_column}_normalized",
             )
@@ -299,7 +366,7 @@ class SQLQueryGenerator:
         cols = ",\n".join(select_lines)
 
         return (
-            f"-- ③ SOURCE: PostgreSQL ({schema}.{table})\n"
+            f"-- ③ SOURCE: {label} ({schema}.{table})\n"
             f"SELECT\n{cols}\n"
             f"FROM {schema}.{table};"
         )
@@ -340,7 +407,7 @@ class SQLQueryGenerator:
         )
 
     # -----------------------------------------------------------------------
-    # ⑤ NULL % Per Column — PostgreSQL
+    # ⑤ NULL % Per Column — Source
     # -----------------------------------------------------------------------
 
     def _null_pct_pg(
@@ -348,17 +415,37 @@ class SQLQueryGenerator:
         schema: str,
         table: str,
         mappings: List[ColumnRuleMapping],
+        src_type: str = "postgresql",
     ) -> str:
         if not mappings:
             return ""
 
+        label = _source_label(src_type)
+
+        # Try AI-powered generation
+        if self._use_ai and self._ai_generator and self._ai_generator._ai_active:
+            try:
+                result = self._ai_generator.generate_validation_query(
+                    schema=schema,
+                    table=table,
+                    mappings=mappings,
+                    source_db_type=src_type,
+                    query_type="null_pct",
+                    has_fivetran_active=False,
+                )
+                if result.confidence > 0.7:
+                    return f"-- ⑤ NULL % CHECK: {label} ({schema}.{table})\n-- AI-generated\n{result.query}"
+            except Exception:
+                pass  # Fall back to rule-based
+
+        # Rule-based fallback
         null_parts = ",\n    ".join(
             f"ROUND(100.0 * SUM(CASE WHEN {m.source_column} IS NULL THEN 1 ELSE 0 END)"
             f" / COUNT(*), 2) AS {m.source_column}_null_pct"
             for m in mappings
         )
         return (
-            f"-- ⑤ NULL % CHECK: PostgreSQL ({schema}.{table})\n"
+            f"-- ⑤ NULL % CHECK: {label} ({schema}.{table})\n"
             f"SELECT\n    COUNT(*) AS total_rows,\n    {null_parts}\n"
             f"FROM {schema}.{table};"
         )
@@ -389,7 +476,7 @@ class SQLQueryGenerator:
         )
 
     # -----------------------------------------------------------------------
-    # ⑦ Distinct value count per column — PostgreSQL
+    # ⑦ Distinct value count per column — Source
     # -----------------------------------------------------------------------
 
     def _distinct_count_pg(
@@ -397,22 +484,45 @@ class SQLQueryGenerator:
         schema: str,
         table: str,
         mappings: List[ColumnRuleMapping],
+        src_type: str = "postgresql",
     ) -> str:
         if not mappings:
             return ""
 
-        # json has no equality operator; cast to jsonb first so DISTINCT works.
+        label = _source_label(src_type)
+
+        # Try AI-powered generation
+        if self._use_ai and self._ai_generator and self._ai_generator._ai_active:
+            try:
+                result = self._ai_generator.generate_validation_query(
+                    schema=schema,
+                    table=table,
+                    mappings=mappings,
+                    source_db_type=src_type,
+                    query_type="distinct_count",
+                    has_fivetran_active=False,
+                )
+                if result.confidence > 0.7:
+                    return f"-- ⑦ DISTINCT VALUE COUNT: {label} ({schema}.{table})\n-- AI-generated\n{result.query}"
+            except Exception:
+                pass  # Fall back to rule-based
+
+        # Rule-based fallback
+        is_pg = src_type in ("postgres", "postgresql")
+
+        # json has no equality operator in PostgreSQL; cast to jsonb first so
+        # DISTINCT works. Only relevant for the PostgreSQL dialect.
         _JSON_TYPES = {"json"}
 
         def _pg_distinct_expr(m) -> str:
             col = m.source_column
-            if getattr(m, "source_type", "").lower() in _JSON_TYPES:
+            if is_pg and getattr(m, "source_type", "").lower() in _JSON_TYPES:
                 return f"COUNT(DISTINCT {col}::jsonb) AS {col}_distinct_count"
             return f"COUNT(DISTINCT {col}) AS {col}_distinct_count"
 
         distinct_parts = ",\n    ".join(_pg_distinct_expr(m) for m in mappings)
         return (
-            f"-- ⑦ DISTINCT VALUE COUNT: PostgreSQL ({schema}.{table})\n"
+            f"-- ⑦ DISTINCT VALUE COUNT: {label} ({schema}.{table})\n"
             f"-- Compare distinct counts with ⑧ — large differences indicate data drift.\n"
             f"SELECT\n    COUNT(*) AS total_rows,\n    {distinct_parts}\n"
             f"FROM {schema}.{table};"
@@ -564,17 +674,19 @@ class SQLQueryGenerator:
         table: str,
         mappings: List[ColumnRuleMapping],
         pks: List[str],
+        src_type: str = "postgresql",
     ) -> str:
         if not mappings:
             return ""
+        label = _source_label(src_type)
         select_lines = []
         for m in mappings:
-            expr = m.rule.apply_postgresql(m.source_column, alias=f"{m.source_column}_normalized")
+            expr = m.rule.apply_source(src_type, m.source_column, alias=f"{m.source_column}_normalized")
             select_lines.append(f"    {expr}")
         cols     = ",\n".join(select_lines)
         order_by = ", ".join(pks)
         return (
-            f"-- ⑬ ORDERED VALIDATION — PostgreSQL ({schema}.{table})\n"
+            f"-- ⑬ ORDERED VALIDATION — {label} ({schema}.{table})\n"
             f"-- ORDER BY PK ensures reproducible row-by-row comparison with ⑭.\n"
             f"SELECT\n{cols}\n"
             f"FROM {schema}.{table}\n"
@@ -714,6 +826,23 @@ class SQLQueryGenerator:
 # ---------------------------------------------------------------------------
 # Plan-to-mapping adapter (module-level helper)
 # ---------------------------------------------------------------------------
+
+def _source_label(src_type: str) -> str:
+    """Human-readable label for the source dialect used in SQL comments."""
+    db = (src_type or "postgresql").strip().lower()
+    return {
+        "postgres":    "PostgreSQL",
+        "postgresql":  "PostgreSQL",
+        "mssql":       "MS SQL Server",
+        "sqlserver":   "MS SQL Server",
+        "sql_server":  "MS SQL Server",
+        "mssqlserver": "MS SQL Server",
+        "athena":      "Athena",
+        "trino":       "Trino",
+        "presto":      "Presto",
+        "snowflake":   "Snowflake",
+    }.get(db, src_type)
+
 
 def _plan_to_rule_mappings(
     active_entries: "List[ColumnMappingEntry]",

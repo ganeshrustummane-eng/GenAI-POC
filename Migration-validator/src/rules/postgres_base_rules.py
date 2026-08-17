@@ -48,13 +48,59 @@ class BaseValidationRule(ABC):
     @abstractmethod
     def _sf_expression(self, col: str) -> str: ...
 
+    # ── MSSQL (SQL Server) source expression ─────────────────────────────
+    # Defaults to the PostgreSQL expression so rules that share identical
+    # syntax need not override it. Rules whose PG syntax is NOT valid on
+    # SQL Server (TO_CHAR, CAST AS TEXT, encode(), ::jsonb, etc.) MUST
+    # override this method with SQL-Server-compatible syntax.
+    def _ms_expression(self, col: str) -> str:
+        return self._pg_expression(col)
+
+    # ── Athena (Trino/Presto) source expression ──────────────────────────
+    # Defaults to the PostgreSQL expression. Rules whose PG syntax differs
+    # on Athena/Trino should override this method.
+    def _athena_expression(self, col: str) -> str:
+        return self._pg_expression(col)
+
     def apply_postgresql(self, col: str, alias: Optional[str] = None) -> str:
         wrapped = self._coalesce_pg(self._pg_expression(col))
+        return f"{wrapped} AS {alias}" if alias else wrapped
+
+    def apply_mssql(self, col: str, alias: Optional[str] = None) -> str:
+        wrapped = self._coalesce_ms(self._ms_expression(col))
+        return f"{wrapped} AS {alias}" if alias else wrapped
+
+    def apply_athena(self, col: str, alias: Optional[str] = None) -> str:
+        wrapped = self._coalesce_athena(self._athena_expression(col))
         return f"{wrapped} AS {alias}" if alias else wrapped
 
     def apply_snowflake(self, col: str, alias: Optional[str] = None) -> str:
         wrapped = self._coalesce_sf(self._sf_expression(col))
         return f"{wrapped} AS {alias}" if alias else wrapped
+
+    def apply_source(
+        self, source_db_type: str, col: str, alias: Optional[str] = None
+    ) -> str:
+        """Dispatch to the correct source-database dialect.
+
+        Args:
+            source_db_type: 'postgresql' | 'postgres' | 'mssql' | 'sqlserver'
+                            | 'athena' | 'trino' | 'presto' | 'snowflake'
+            col           : Column name to normalize
+            alias         : Optional SELECT alias
+
+        Returns:
+            A COALESCE-wrapped, dialect-correct SQL expression.
+        """
+        db = (source_db_type or "postgresql").strip().lower()
+        if db in ("mssql", "sqlserver", "sql_server", "mssqlserver"):
+            return self.apply_mssql(col, alias)
+        if db in ("athena", "trino", "presto"):
+            return self.apply_athena(col, alias)
+        if db in ("snowflake",):
+            return self.apply_snowflake(col, alias)
+        # postgres / postgresql / default
+        return self.apply_postgresql(col, alias)
 
     @property
     def is_skip_rule(self) -> bool:
@@ -63,6 +109,16 @@ class BaseValidationRule(ABC):
     @staticmethod
     def _coalesce_pg(expr: str) -> str:
         return f"COALESCE(CAST({expr} AS TEXT), '{NULL_PLACEHOLDER}')"
+
+    @staticmethod
+    def _coalesce_ms(expr: str) -> str:
+        # SQL Server has no TEXT cast target for comparison; use VARCHAR(MAX).
+        return f"COALESCE(CAST({expr} AS VARCHAR(MAX)), '{NULL_PLACEHOLDER}')"
+
+    @staticmethod
+    def _coalesce_athena(expr: str) -> str:
+        # Athena/Trino uses VARCHAR (no TEXT type).
+        return f"COALESCE(CAST({expr} AS VARCHAR), '{NULL_PLACEHOLDER}')"
 
     @staticmethod
     def _coalesce_sf(expr: str) -> str:
@@ -123,6 +179,16 @@ class _NoOpRule(BaseValidationRule):
     def trigger_pairs(self) -> List[Tuple[str, str]]: return [("*", "*")]
     def _pg_expression(self, col: str) -> str: return f"CAST({col} AS TEXT)"
     def _sf_expression(self, col: str) -> str: return f"CAST({col} AS STRING)"
+    def _ms_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR(MAX))"
+    def _athena_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR)"
+    def _ms_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR(MAX))"
+    def _athena_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR)"
+    def _ms_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR(MAX))"
+    def _athena_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR)"
+    def _ms_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR(MAX))"
+    def _athena_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR)"
+    def _ms_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR(MAX))"
+    def _athena_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR)"
 
 
 # ── Concrete Rules ────────────────────────────────────────────────────────────
@@ -149,6 +215,15 @@ class BooleanRule(BaseValidationRule):
     def _sf_expression(self, col: str) -> str:
         return (f"CASE WHEN {col} = TRUE THEN '1' "
                 f"WHEN {col} = FALSE THEN '0' ELSE NULL END")
+
+    def _ms_expression(self, col: str) -> str:
+        # SQL Server BIT: 1/0 (no true/false literals).
+        return (f"CASE WHEN {col} = 1 THEN '1' "
+                f"WHEN {col} = 0 THEN '0' ELSE NULL END")
+
+    def _athena_expression(self, col: str) -> str:
+        return (f"CASE WHEN {col} = true THEN '1' "
+                f"WHEN {col} = false THEN '0' ELSE NULL END")
 
 
 class IntegerRule(BaseValidationRule):
@@ -204,6 +279,12 @@ class NumericRule(BaseValidationRule):
     def _sf_expression(self, col: str) -> str:
         return f"ROUND(CAST({col} AS NUMBER(38, {self._dp})), {self._dp})"
 
+    def _ms_expression(self, col: str) -> str:
+        return f"ROUND(CAST({col} AS DECIMAL(38, {self._dp})), {self._dp})"
+
+    def _athena_expression(self, col: str) -> str:
+        return f"ROUND(CAST({col} AS DECIMAL(38, {self._dp})), {self._dp})"
+
 
 class TimestampTZRule(BaseValidationRule):
     """Timestamp TZ: convert to UTC then format as 'YYYY-MM-DD HH24:MI:SS'. NULL→'<<NULL>>'."""
@@ -226,6 +307,14 @@ class TimestampTZRule(BaseValidationRule):
 
     def _sf_expression(self, col: str) -> str:
         return f"TO_VARCHAR(CONVERT_TIMEZONE('UTC', {col}), 'YYYY-MM-DD HH24:MI:SS')"
+
+    def _ms_expression(self, col: str) -> str:
+        # SQL Server: shift to UTC then format (24-hour clock).
+        return f"FORMAT({col} AT TIME ZONE 'UTC', 'yyyy-MM-dd HH:mm:ss')"
+
+    def _athena_expression(self, col: str) -> str:
+        # Trino/Athena: normalize to UTC then format.
+        return f"date_format(at_timezone({col}, 'UTC'), '%Y-%m-%d %H:%i:%s')"
 
 
 class TimestampNTZRule(BaseValidationRule):
@@ -251,6 +340,12 @@ class TimestampNTZRule(BaseValidationRule):
     def _sf_expression(self, col: str) -> str:
         return f"TO_VARCHAR({col}, 'YYYY-MM-DD HH24:MI:SS')"
 
+    def _ms_expression(self, col: str) -> str:
+        return f"FORMAT({col}, 'yyyy-MM-dd HH:mm:ss')"
+
+    def _athena_expression(self, col: str) -> str:
+        return f"date_format({col}, '%Y-%m-%d %H:%i:%s')"
+
 
 class DateRule(BaseValidationRule):
     """Date: format as 'YYYY-MM-DD'. NULL→'<<NULL>>'."""
@@ -267,6 +362,8 @@ class DateRule(BaseValidationRule):
 
     def _pg_expression(self, col: str) -> str: return f"TO_CHAR({col}, 'YYYY-MM-DD')"
     def _sf_expression(self, col: str) -> str: return f"TO_VARCHAR({col}, 'YYYY-MM-DD')"
+    def _ms_expression(self, col: str) -> str: return f"FORMAT({col}, 'yyyy-MM-dd')"
+    def _athena_expression(self, col: str) -> str: return f"date_format({col}, '%Y-%m-%d')"
 
 
 class TextRule(BaseValidationRule):
@@ -291,6 +388,8 @@ class TextRule(BaseValidationRule):
 
     def _pg_expression(self, col: str) -> str: return f"TRIM({col})"
     def _sf_expression(self, col: str) -> str: return f"TRIM({col})"
+    def _ms_expression(self, col: str) -> str: return f"LTRIM(RTRIM({col}))"
+    def _athena_expression(self, col: str) -> str: return f"TRIM({col})"
 
 
 class UUIDRule(BaseValidationRule):
@@ -310,6 +409,8 @@ class UUIDRule(BaseValidationRule):
 
     def _pg_expression(self, col: str) -> str: return f"UPPER(TRIM(CAST({col} AS TEXT)))"
     def _sf_expression(self, col: str) -> str: return f"UPPER(TRIM(CAST({col} AS STRING)))"
+    def _ms_expression(self, col: str) -> str: return f"UPPER(LTRIM(RTRIM(CAST({col} AS VARCHAR(MAX)))))"
+    def _athena_expression(self, col: str) -> str: return f"UPPER(TRIM(CAST({col} AS VARCHAR)))"
 
 
 class JSONRule(BaseValidationRule):
@@ -329,6 +430,8 @@ class JSONRule(BaseValidationRule):
 
     def _pg_expression(self, col: str) -> str: return f"{col}::jsonb::text"
     def _sf_expression(self, col: str) -> str: return f"TO_JSON(PARSE_JSON(CAST({col} AS STRING)))"
+    def _ms_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR(MAX))"
+    def _athena_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR)"
 
 
 class ByteaRule(BaseValidationRule):
@@ -349,6 +452,8 @@ class ByteaRule(BaseValidationRule):
 
     def _pg_expression(self, col: str) -> str: return f"encode({col}, 'hex')"
     def _sf_expression(self, col: str) -> str: return f"LOWER(HEX_ENCODE({col}))"
+    def _ms_expression(self, col: str) -> str: return f"LOWER(CONVERT(VARCHAR(MAX), {col}, 2))"
+    def _athena_expression(self, col: str) -> str: return f"LOWER(to_hex({col}))"
 
 
 class HStoreRule(BaseValidationRule):
@@ -368,6 +473,8 @@ class HStoreRule(BaseValidationRule):
 
     def _pg_expression(self, col: str) -> str: return f"TRIM(CAST({col} AS TEXT))"
     def _sf_expression(self, col: str) -> str: return f"TRIM({col})"
+    def _ms_expression(self, col: str) -> str: return f"LTRIM(RTRIM(CAST({col} AS VARCHAR(MAX))))"
+    def _athena_expression(self, col: str) -> str: return f"TRIM(CAST({col} AS VARCHAR))"
 
 
 class NullPlaceholderRule(BaseValidationRule):
@@ -386,6 +493,8 @@ class NullPlaceholderRule(BaseValidationRule):
 
     def _pg_expression(self, col: str) -> str: return f"CAST({col} AS TEXT)"
     def _sf_expression(self, col: str) -> str: return f"CAST({col} AS STRING)"
+    def _ms_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR(MAX))"
+    def _athena_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR)"
 
     def apply_postgresql(self, col: str, alias=None) -> str:
         expr = f"COALESCE(CAST({col} AS TEXT), '{NULL_PLACEHOLDER}')"
@@ -393,4 +502,12 @@ class NullPlaceholderRule(BaseValidationRule):
 
     def apply_snowflake(self, col: str, alias=None) -> str:
         expr = f"COALESCE(CAST({col} AS STRING), '{NULL_PLACEHOLDER}')"
+        return f"{expr} AS {alias}" if alias else expr
+
+    def apply_mssql(self, col: str, alias=None) -> str:
+        expr = f"COALESCE(CAST({col} AS VARCHAR(MAX)), '{NULL_PLACEHOLDER}')"
+        return f"{expr} AS {alias}" if alias else expr
+
+    def apply_athena(self, col: str, alias=None) -> str:
+        expr = f"COALESCE(CAST({col} AS VARCHAR), '{NULL_PLACEHOLDER}')"
         return f"{expr} AS {alias}" if alias else expr

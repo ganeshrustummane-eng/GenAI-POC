@@ -15,9 +15,9 @@ Thresholds (configurable)
 HIGH_CONFIDENCE_THRESHOLD = 0.95
   Above this: accept automatically without AI review.
 
-AI_REVIEW_THRESHOLD = 0.75
+AI_REVIEW_THRESHOLD = 0.80
   Between AI_REVIEW and HIGH_CONFIDENCE: send to AI for verification.
-  Below AI_REVIEW: column is reported as low-confidence / unmatched.
+  Below AI_REVIEW (< 80%): column is reported as low-confidence / FAIL.
 
 These can be overridden per call or via environment variables.
 
@@ -41,7 +41,7 @@ from matching.normalizer import normalize_column_name
 # ---------------------------------------------------------------------------
 
 _DEFAULT_HIGH_CONFIDENCE = float(os.getenv("FUZZY_HIGH_CONFIDENCE", "0.95"))
-_DEFAULT_AI_REVIEW       = float(os.getenv("FUZZY_AI_REVIEW",       "0.75"))
+_DEFAULT_AI_REVIEW       = float(os.getenv("FUZZY_AI_REVIEW",       "0.80"))
 
 
 @dataclass

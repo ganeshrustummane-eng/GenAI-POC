@@ -174,6 +174,7 @@ class CanonicalValidationPlan:
 
     # ── Table identity ─────────────────────────────────────────────────────
     source_database: str = ""
+    source_db_type:  str = ""   # e.g. 'postgresql', 'mssql', 'mysql'
     source_schema:   str = ""
     source_table:    str = ""
     target_database: str = ""

@@ -19,3 +19,5 @@ __all__ = [
     "TextRule", "UUIDRule", "JSONRule", "ByteaRule",
     "HStoreRule", "NullPlaceholderRule", "DEFAULT_DECIMAL_PLACES",
 ]
+
+

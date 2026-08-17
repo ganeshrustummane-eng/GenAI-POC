@@ -327,7 +327,7 @@ class MSSQLExtractor(BaseExtractor):
     """
 
     def __init__(self, host=None, port=None, database=None, username=None, password=None,
-                 driver=None, auth=None):
+                 driver=None, auth=None, **_):
         self.host     = host     or os.getenv("SOURCE_HOST",     "localhost")
         self.port     = int(port or os.getenv("SOURCE_PORT",     "1433"))
         self.database = database or os.getenv("SOURCE_DATABASE", "master")
