@@ -24,8 +24,13 @@ Security:
 from dataclasses import dataclass, field
 from typing import List, Set
 
-from core.validation_plan import CanonicalValidationPlan, PlanStatus
-from rules import get_registry
+try:
+    from ..core.validation_plan import CanonicalValidationPlan, PlanStatus
+    from ..rules import get_registry
+except ImportError:
+    # Support the documented `cd src && python validate_cli.py` launch mode.
+    from core.validation_plan import CanonicalValidationPlan, PlanStatus
+    from rules import get_registry
 
 # Known rule IDs (queried from the registry at validation time)
 _FALLBACK_KNOWN_RULES: Set[str] = {

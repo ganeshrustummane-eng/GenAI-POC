@@ -1,14 +1,15 @@
 # ============================================================
 # Migration Validator — Data Validation Config
 # Table      : Addresses
-# Generated  : 2026-08-13T19:51:32.280762
+# Generated  : 2026-08-17T11:52:46.998920
 # By         : AI (model: gpt-4o)
-# Columns    : 27 comparable columns
+# Columns    : 26 comparable columns
 #
 # Validation blocks (row count is in bronze.yaml):
 #   data_validation           — normalised full-scan SELECT (all columns)
-#   null_pct_validation       — NULL % per column
-#   distinct_count_validation — distinct value counts per column
+#
+# Note: null_pct_validation and distinct_count_validation have been
+# removed. Only data_validation and count_validation are used.
 #
 # Normalization rules applied automatically:
 #   - Boolean    : TRUE/FALSE -> '1'/'0'
@@ -33,210 +34,73 @@ tables:
       data_validation:
         source_table_name: Addresses
         source: mssql
-        sourcecolumn: AddressID
+        pksourcecolumn: AddressID
         sourcequery: |
-          -- AI-generated query (confidence: 0.95)
           SELECT 
             COALESCE(CAST(AddressID AS VARCHAR(MAX)), '<<NULL>>') AS AddressID_normalized,
             COALESCE(CAST(SiteID AS VARCHAR(MAX)), '<<NULL>>') AS SiteID_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(sMrMrs)) AS VARCHAR(MAX)), '<<NULL>>') AS sMrMrs_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(sFName)) AS VARCHAR(MAX)), '<<NULL>>') AS sFName_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(sMI)) AS VARCHAR(MAX)), '<<NULL>>') AS sMI_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(sLName)) AS VARCHAR(MAX)), '<<NULL>>') AS sLName_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(sCompany)) AS VARCHAR(MAX)), '<<NULL>>') AS sCompany_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(sAddr1)) AS VARCHAR(MAX)), '<<NULL>>') AS sAddr1_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(sAddr2)) AS VARCHAR(MAX)), '<<NULL>>') AS sAddr2_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(sCity)) AS VARCHAR(MAX)), '<<NULL>>') AS sCity_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(sRegion)) AS VARCHAR(MAX)), '<<NULL>>') AS sRegion_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(sPostalCode)) AS VARCHAR(MAX)), '<<NULL>>') AS sPostalCode_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(sCountry)) AS VARCHAR(MAX)), '<<NULL>>') AS sCountry_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(sPhone1)) AS VARCHAR(MAX)), '<<NULL>>') AS sPhone1_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(sPhone2)) AS VARCHAR(MAX)), '<<NULL>>') AS sPhone2_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(sPhone3)) AS VARCHAR(MAX)), '<<NULL>>') AS sPhone3_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(sPhone4)) AS VARCHAR(MAX)), '<<NULL>>') AS sPhone4_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(sPhone5)) AS VARCHAR(MAX)), '<<NULL>>') AS sPhone5_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(sPhone6)) AS VARCHAR(MAX)), '<<NULL>>') AS sPhone6_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sMrMrs AS VARCHAR(MAX)))), '<<NULL>>') AS sMrMrs_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sFName AS VARCHAR(MAX)))), '<<NULL>>') AS sFName_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sMI AS VARCHAR(MAX)))), '<<NULL>>') AS sMI_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sLName AS VARCHAR(MAX)))), '<<NULL>>') AS sLName_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sCompany AS VARCHAR(MAX)))), '<<NULL>>') AS sCompany_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sAddr1 AS VARCHAR(MAX)))), '<<NULL>>') AS sAddr1_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sAddr2 AS VARCHAR(MAX)))), '<<NULL>>') AS sAddr2_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sCity AS VARCHAR(MAX)))), '<<NULL>>') AS sCity_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sRegion AS VARCHAR(MAX)))), '<<NULL>>') AS sRegion_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sPostalCode AS VARCHAR(MAX)))), '<<NULL>>') AS sPostalCode_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sCountry AS VARCHAR(MAX)))), '<<NULL>>') AS sCountry_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sPhone1 AS VARCHAR(MAX)))), '<<NULL>>') AS sPhone1_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sPhone2 AS VARCHAR(MAX)))), '<<NULL>>') AS sPhone2_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sPhone3 AS VARCHAR(MAX)))), '<<NULL>>') AS sPhone3_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sPhone4 AS VARCHAR(MAX)))), '<<NULL>>') AS sPhone4_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sPhone5 AS VARCHAR(MAX)))), '<<NULL>>') AS sPhone5_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sPhone6 AS VARCHAR(MAX)))), '<<NULL>>') AS sPhone6_normalized,
             COALESCE(CAST(dcLongitude AS VARCHAR(MAX)), '<<NULL>>') AS dcLongitude_normalized,
             COALESCE(CAST(dcLatitude AS VARCHAR(MAX)), '<<NULL>>') AS dcLatitude_normalized,
             COALESCE(CASE WHEN bPermanent = 1 THEN '1' WHEN bPermanent = 0 THEN '0' ELSE NULL END, '<<NULL>>') AS bPermanent_normalized,
             COALESCE(FORMAT(dDeleted, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') AS dDeleted_normalized,
             COALESCE(FORMAT(dUpdated, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') AS dUpdated_normalized,
             COALESCE(FORMAT(dArchived, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') AS dArchived_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(uTS)) AS VARCHAR(MAX)), '<<NULL>>') AS uTS_normalized,
             COALESCE(CAST(OldPK AS VARCHAR(MAX)), '<<NULL>>') AS OldPK_normalized
           FROM dbo.Addresses;
         target_table_name: ADDRESSES
         target: snowflake
-        targetcolumn: ADDRESSID
+        pktargetcolumn: ADDRESSID
         targetquery: |
-          SELECT
-              COALESCE(CAST(CAST(ADDRESSID AS STRING) AS STRING), '<<NULL>>') AS AddressID_normalized,
-              COALESCE(CAST(CAST(SITEID AS STRING) AS STRING), '<<NULL>>') AS SiteID_normalized,
-              COALESCE(CAST(TRIM(SMRMRS) AS STRING), '<<NULL>>') AS sMrMrs_normalized,
-              COALESCE(CAST(TRIM(SFNAME) AS STRING), '<<NULL>>') AS sFName_normalized,
-              COALESCE(CAST(TRIM(SMI) AS STRING), '<<NULL>>') AS sMI_normalized,
-              COALESCE(CAST(TRIM(SLNAME) AS STRING), '<<NULL>>') AS sLName_normalized,
-              COALESCE(CAST(TRIM(SCOMPANY) AS STRING), '<<NULL>>') AS sCompany_normalized,
-              COALESCE(CAST(TRIM(SADDR1) AS STRING), '<<NULL>>') AS sAddr1_normalized,
-              COALESCE(CAST(TRIM(SADDR2) AS STRING), '<<NULL>>') AS sAddr2_normalized,
-              COALESCE(CAST(TRIM(SCITY) AS STRING), '<<NULL>>') AS sCity_normalized,
-              COALESCE(CAST(TRIM(SREGION) AS STRING), '<<NULL>>') AS sRegion_normalized,
-              COALESCE(CAST(TRIM(SPOSTALCODE) AS STRING), '<<NULL>>') AS sPostalCode_normalized,
-              COALESCE(CAST(TRIM(SCOUNTRY) AS STRING), '<<NULL>>') AS sCountry_normalized,
-              COALESCE(CAST(TRIM(SPHONE1) AS STRING), '<<NULL>>') AS sPhone1_normalized,
-              COALESCE(CAST(TRIM(SPHONE2) AS STRING), '<<NULL>>') AS sPhone2_normalized,
-              COALESCE(CAST(TRIM(SPHONE3) AS STRING), '<<NULL>>') AS sPhone3_normalized,
-              COALESCE(CAST(TRIM(SPHONE4) AS STRING), '<<NULL>>') AS sPhone4_normalized,
-              COALESCE(CAST(TRIM(SPHONE5) AS STRING), '<<NULL>>') AS sPhone5_normalized,
-              COALESCE(CAST(TRIM(SPHONE6) AS STRING), '<<NULL>>') AS sPhone6_normalized,
-              COALESCE(CAST(ROUND(CAST(DCLONGITUDE AS NUMBER(38, 2)), 2) AS STRING), '<<NULL>>') AS dcLongitude_normalized,
-              COALESCE(CAST(ROUND(CAST(DCLATITUDE AS NUMBER(38, 2)), 2) AS STRING), '<<NULL>>') AS dcLatitude_normalized,
-              COALESCE(CAST(CASE WHEN BPERMANENT = TRUE THEN '1' WHEN BPERMANENT = FALSE THEN '0' ELSE NULL END AS STRING), '<<NULL>>') AS bPermanent_normalized,
-              COALESCE(CAST(TO_VARCHAR(DDELETED, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>') AS dDeleted_normalized,
-              COALESCE(CAST(TO_VARCHAR(DUPDATED, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>') AS dUpdated_normalized,
-              COALESCE(CAST(TO_VARCHAR(DARCHIVED, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>') AS dArchived_normalized,
-              COALESCE(CAST(TRIM(UTS) AS STRING), '<<NULL>>') AS uTS_normalized,
-              COALESCE(CAST(CAST(OLDPK AS STRING) AS STRING), '<<NULL>>') AS OldPK_normalized
-          FROM DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.ADDRESSES
-          WHERE _FIVETRAN_ACTIVE = TRUE;
-
-      # ── ⑤ / ⑥ NULL % per column ──────────────────────────────────
-      null_pct_validation:
-        source_table_name: Addresses
-        source: mssql
-        sourcequery: |
-          -- AI-generated
           SELECT 
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(AddressID AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS AddressID_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(SiteID AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS SiteID_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(LTRIM(RTRIM(sMrMrs)) AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS sMrMrs_normalized_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(LTRIM(RTRIM(sFName)) AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS sFName_normalized_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(LTRIM(RTRIM(sMI)) AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS sMI_normalized_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(LTRIM(RTRIM(sLName)) AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS sLName_normalized_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(LTRIM(RTRIM(sCompany)) AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS sCompany_normalized_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(LTRIM(RTRIM(sAddr1)) AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS sAddr1_normalized_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(LTRIM(RTRIM(sAddr2)) AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS sAddr2_normalized_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(LTRIM(RTRIM(sCity)) AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS sCity_normalized_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(LTRIM(RTRIM(sRegion)) AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS sRegion_normalized_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(LTRIM(RTRIM(sPostalCode)) AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS sPostalCode_normalized_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(LTRIM(RTRIM(sCountry)) AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS sCountry_normalized_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(LTRIM(RTRIM(sPhone1)) AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS sPhone1_normalized_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(LTRIM(RTRIM(sPhone2)) AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS sPhone2_normalized_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(LTRIM(RTRIM(sPhone3)) AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS sPhone3_normalized_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(LTRIM(RTRIM(sPhone4)) AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS sPhone4_normalized_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(LTRIM(RTRIM(sPhone5)) AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS sPhone5_normalized_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(LTRIM(RTRIM(sPhone6)) AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS sPhone6_normalized_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(dcLongitude AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS dcLongitude_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(dcLatitude AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS dcLatitude_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CASE WHEN bPermanent = 1 THEN '1' WHEN bPermanent = 0 THEN '0' ELSE NULL END, '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS bPermanent_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(FORMAT(dDeleted, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS dDeleted_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(FORMAT(dUpdated, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS dUpdated_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(FORMAT(dArchived, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS dArchived_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(LTRIM(RTRIM(uTS)) AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS uTS_normalized_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(OldPK AS VARCHAR(MAX)), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS OldPK_null_percentage
-          FROM dbo.Addresses;
-        target_table_name: ADDRESSES
-        target: snowflake
-        targetquery: |
-          SELECT
-              COUNT(*) AS total_rows,
-              ROUND(100.0 * SUM(CASE WHEN ADDRESSID IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS AddressID_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SITEID IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS SiteID_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SMRMRS IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sMrMrs_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SFNAME IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sFName_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SMI IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sMI_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SLNAME IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sLName_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SCOMPANY IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sCompany_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SADDR1 IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sAddr1_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SADDR2 IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sAddr2_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SCITY IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sCity_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SREGION IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sRegion_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SPOSTALCODE IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sPostalCode_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SCOUNTRY IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sCountry_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SPHONE1 IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sPhone1_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SPHONE2 IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sPhone2_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SPHONE3 IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sPhone3_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SPHONE4 IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sPhone4_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SPHONE5 IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sPhone5_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SPHONE6 IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sPhone6_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN DCLONGITUDE IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS dcLongitude_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN DCLATITUDE IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS dcLatitude_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN BPERMANENT IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS bPermanent_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN DDELETED IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS dDeleted_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN DUPDATED IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS dUpdated_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN DARCHIVED IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS dArchived_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN UTS IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS uTS_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN OLDPK IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS OldPK_null_pct
-          FROM DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.ADDRESSES
-          WHERE _FIVETRAN_ACTIVE = TRUE;
-
-      # ── ⑦ / ⑧ Distinct value counts per column ───────────────────
-      distinct_count_validation:
-        source_table_name: Addresses
-        source: mssql
-        sourcequery: |
-          -- AI-generated
-          SELECT 
-              COUNT(DISTINCT COALESCE(CAST(AddressID AS VARCHAR(MAX)), '<<NULL>>')) AS AddressID_normalized,
-              COUNT(DISTINCT COALESCE(CAST(SiteID AS VARCHAR(MAX)), '<<NULL>>')) AS SiteID_normalized,
-              COUNT(DISTINCT COALESCE(LTRIM(RTRIM(CAST(sMrMrs AS VARCHAR(MAX)))), '<<NULL>>')) AS sMrMrs_normalized,
-              COUNT(DISTINCT COALESCE(LTRIM(RTRIM(CAST(sFName AS VARCHAR(MAX)))), '<<NULL>>')) AS sFName_normalized,
-              COUNT(DISTINCT COALESCE(LTRIM(RTRIM(CAST(sMI AS VARCHAR(MAX)))), '<<NULL>>')) AS sMI_normalized,
-              COUNT(DISTINCT COALESCE(LTRIM(RTRIM(CAST(sLName AS VARCHAR(MAX)))), '<<NULL>>')) AS sLName_normalized,
-              COUNT(DISTINCT COALESCE(LTRIM(RTRIM(CAST(sCompany AS VARCHAR(MAX)))), '<<NULL>>')) AS sCompany_normalized,
-              COUNT(DISTINCT COALESCE(LTRIM(RTRIM(CAST(sAddr1 AS VARCHAR(MAX)))), '<<NULL>>')) AS sAddr1_normalized,
-              COUNT(DISTINCT COALESCE(LTRIM(RTRIM(CAST(sAddr2 AS VARCHAR(MAX)))), '<<NULL>>')) AS sAddr2_normalized,
-              COUNT(DISTINCT COALESCE(LTRIM(RTRIM(CAST(sCity AS VARCHAR(MAX)))), '<<NULL>>')) AS sCity_normalized,
-              COUNT(DISTINCT COALESCE(LTRIM(RTRIM(CAST(sRegion AS VARCHAR(MAX)))), '<<NULL>>')) AS sRegion_normalized,
-              COUNT(DISTINCT COALESCE(LTRIM(RTRIM(CAST(sPostalCode AS VARCHAR(MAX)))), '<<NULL>>')) AS sPostalCode_normalized,
-              COUNT(DISTINCT COALESCE(LTRIM(RTRIM(CAST(sCountry AS VARCHAR(MAX)))), '<<NULL>>')) AS sCountry_normalized,
-              COUNT(DISTINCT COALESCE(LTRIM(RTRIM(CAST(sPhone1 AS VARCHAR(MAX)))), '<<NULL>>')) AS sPhone1_normalized,
-              COUNT(DISTINCT COALESCE(LTRIM(RTRIM(CAST(sPhone2 AS VARCHAR(MAX)))), '<<NULL>>')) AS sPhone2_normalized,
-              COUNT(DISTINCT COALESCE(LTRIM(RTRIM(CAST(sPhone3 AS VARCHAR(MAX)))), '<<NULL>>')) AS sPhone3_normalized,
-              COUNT(DISTINCT COALESCE(LTRIM(RTRIM(CAST(sPhone4 AS VARCHAR(MAX)))), '<<NULL>>')) AS sPhone4_normalized,
-              COUNT(DISTINCT COALESCE(LTRIM(RTRIM(CAST(sPhone5 AS VARCHAR(MAX)))), '<<NULL>>')) AS sPhone5_normalized,
-              COUNT(DISTINCT COALESCE(LTRIM(RTRIM(CAST(sPhone6 AS VARCHAR(MAX)))), '<<NULL>>')) AS sPhone6_normalized,
-              COUNT(DISTINCT COALESCE(CAST(dcLongitude AS VARCHAR(MAX)), '<<NULL>>')) AS dcLongitude_normalized,
-              COUNT(DISTINCT COALESCE(CAST(dcLatitude AS VARCHAR(MAX)), '<<NULL>>')) AS dcLatitude_normalized,
-              COUNT(DISTINCT COALESCE(CASE WHEN bPermanent = 1 THEN '1' WHEN bPermanent = 0 THEN '0' ELSE NULL END, '<<NULL>>')) AS bPermanent_normalized,
-              COUNT(DISTINCT COALESCE(FORMAT(dDeleted, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>')) AS dDeleted_normalized,
-              COUNT(DISTINCT COALESCE(FORMAT(dUpdated, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>')) AS dUpdated_normalized,
-              COUNT(DISTINCT COALESCE(FORMAT(dArchived, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>')) AS dArchived_normalized,
-              COUNT(DISTINCT COALESCE(LTRIM(RTRIM(CAST(uTS AS VARCHAR(MAX)))), '<<NULL>>')) AS uTS_normalized,
-              COUNT(DISTINCT COALESCE(CAST(OldPK AS VARCHAR(MAX)), '<<NULL>>')) AS OldPK_normalized
-          FROM dbo.Addresses;
-        target_table_name: ADDRESSES
-        target: snowflake
-        targetquery: |
-          -- Compare distinct counts with ⑦ — large differences indicate data drift.
-          SELECT
-              COUNT(*) AS total_rows,
-              COUNT(DISTINCT ADDRESSID) AS AddressID_distinct_count,
-              COUNT(DISTINCT SITEID) AS SiteID_distinct_count,
-              COUNT(DISTINCT SMRMRS) AS sMrMrs_distinct_count,
-              COUNT(DISTINCT SFNAME) AS sFName_distinct_count,
-              COUNT(DISTINCT SMI) AS sMI_distinct_count,
-              COUNT(DISTINCT SLNAME) AS sLName_distinct_count,
-              COUNT(DISTINCT SCOMPANY) AS sCompany_distinct_count,
-              COUNT(DISTINCT SADDR1) AS sAddr1_distinct_count,
-              COUNT(DISTINCT SADDR2) AS sAddr2_distinct_count,
-              COUNT(DISTINCT SCITY) AS sCity_distinct_count,
-              COUNT(DISTINCT SREGION) AS sRegion_distinct_count,
-              COUNT(DISTINCT SPOSTALCODE) AS sPostalCode_distinct_count,
-              COUNT(DISTINCT SCOUNTRY) AS sCountry_distinct_count,
-              COUNT(DISTINCT SPHONE1) AS sPhone1_distinct_count,
-              COUNT(DISTINCT SPHONE2) AS sPhone2_distinct_count,
-              COUNT(DISTINCT SPHONE3) AS sPhone3_distinct_count,
-              COUNT(DISTINCT SPHONE4) AS sPhone4_distinct_count,
-              COUNT(DISTINCT SPHONE5) AS sPhone5_distinct_count,
-              COUNT(DISTINCT SPHONE6) AS sPhone6_distinct_count,
-              COUNT(DISTINCT DCLONGITUDE) AS dcLongitude_distinct_count,
-              COUNT(DISTINCT DCLATITUDE) AS dcLatitude_distinct_count,
-              COUNT(DISTINCT BPERMANENT) AS bPermanent_distinct_count,
-              COUNT(DISTINCT DDELETED) AS dDeleted_distinct_count,
-              COUNT(DISTINCT DUPDATED) AS dUpdated_distinct_count,
-              COUNT(DISTINCT DARCHIVED) AS dArchived_distinct_count,
-              COUNT(DISTINCT UTS) AS uTS_distinct_count,
-              COUNT(DISTINCT OLDPK) AS OldPK_distinct_count
+              COALESCE(CAST(ADDRESSID AS STRING), '<<NULL>>') AS "AddressID_normalized",
+              COALESCE(CAST(SITEID AS STRING), '<<NULL>>') AS "SiteID_normalized",
+              COALESCE(CAST(SMRMRS AS STRING), '<<NULL>>') AS "sMrMrs_normalized",
+              COALESCE(CAST(SFNAME AS STRING), '<<NULL>>') AS "sFName_normalized",
+              COALESCE(CAST(SMI AS STRING), '<<NULL>>') AS "sMI_normalized",
+              COALESCE(CAST(SLNAME AS STRING), '<<NULL>>') AS "sLName_normalized",
+              COALESCE(CAST(SCOMPANY AS STRING), '<<NULL>>') AS "sCompany_normalized",
+              COALESCE(CAST(SADDR1 AS STRING), '<<NULL>>') AS "sAddr1_normalized",
+              COALESCE(CAST(SADDR2 AS STRING), '<<NULL>>') AS "sAddr2_normalized",
+              COALESCE(CAST(SCITY AS STRING), '<<NULL>>') AS "sCity_normalized",
+              COALESCE(CAST(SREGION AS STRING), '<<NULL>>') AS "sRegion_normalized",
+              COALESCE(CAST(SPOSTALCODE AS STRING), '<<NULL>>') AS "sPostalCode_normalized",
+              COALESCE(CAST(SCOUNTRY AS STRING), '<<NULL>>') AS "sCountry_normalized",
+              COALESCE(CAST(SPHONE1 AS STRING), '<<NULL>>') AS "sPhone1_normalized",
+              COALESCE(CAST(SPHONE2 AS STRING), '<<NULL>>') AS "sPhone2_normalized",
+              COALESCE(CAST(SPHONE3 AS STRING), '<<NULL>>') AS "sPhone3_normalized",
+              COALESCE(CAST(SPHONE4 AS STRING), '<<NULL>>') AS "sPhone4_normalized",
+              COALESCE(CAST(SPHONE5 AS STRING), '<<NULL>>') AS "sPhone5_normalized",
+              COALESCE(CAST(SPHONE6 AS STRING), '<<NULL>>') AS "sPhone6_normalized",
+              COALESCE(CAST(DCLONGITUDE AS STRING), '<<NULL>>') AS "dcLongitude_normalized",
+              COALESCE(CAST(DCLATITUDE AS STRING), '<<NULL>>') AS "dcLatitude_normalized",
+              COALESCE(
+                  CASE 
+                      WHEN BPERMANENT = TRUE THEN '1' 
+                      WHEN BPERMANENT = FALSE THEN '0' 
+                      ELSE NULL 
+                  END, 
+                  '<<NULL>>'
+              ) AS "bPermanent_normalized",
+              COALESCE(TO_VARCHAR(DDELETED, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "dDeleted_normalized",
+              COALESCE(TO_VARCHAR(DUPDATED, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "dUpdated_normalized",
+              COALESCE(TO_VARCHAR(DARCHIVED, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "dArchived_normalized",
+              COALESCE(CAST(OLDPK AS STRING), '<<NULL>>') AS "OldPK_normalized"
           FROM DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.ADDRESSES
           WHERE _FIVETRAN_ACTIVE = TRUE;

@@ -44,6 +44,7 @@ Usage
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -51,6 +52,15 @@ from typing import Optional
 # ── Ensure src/ is in path ────────────────────────────────────────────────────
 _SRC_DIR = Path(__file__).parent
 sys.path.insert(0, str(_SRC_DIR))
+
+# Windows consoles default to cp1252, which cannot encode the box-drawing and
+# arrow characters used throughout this CLI — including inside argparse help,
+# so even `--help` would crash. Force UTF-8 on every stream we write to.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 # ── Load .env ─────────────────────────────────────────────────────────────────
 try:
@@ -168,6 +178,91 @@ STATIC_EXCLUDE_COLUMNS: list = [
     "dv_load_dt",
     "dv_record_source",
 ]
+
+_EXCLUSIONS_YAML_PATH = _SRC_DIR.parent / "config" / "exclusions.yaml"
+
+
+def _load_global_user_exclusions() -> list:
+    """
+    Load user-defined global column exclusions from config/exclusions.yaml.
+    Returns a list of lowercase column names that should be excluded
+    from ALL tables in BOTH source and target, regardless of database.
+    """
+    import yaml
+    try:
+        if not _EXCLUSIONS_YAML_PATH.exists():
+            return []
+        with open(_EXCLUSIONS_YAML_PATH, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        entries = data.get("user_global_exclusions", [])
+        if not isinstance(entries, list):
+            return []
+        return [
+            str(e.get("column_name", "")).strip().lower()
+            for e in entries
+            if isinstance(e, dict) and e.get("column_name", "").strip()
+        ]
+    except Exception:
+        return []
+
+
+def _save_global_user_exclusion(column_name: str, reason: str, added_by: str = "") -> bool:
+    """
+    Append a new global column exclusion to config/exclusions.yaml.
+    The column will be excluded from ALL tables in source AND target.
+    Returns True on success.
+    """
+    import yaml
+    import datetime
+    try:
+        data = {}
+        if _EXCLUSIONS_YAML_PATH.exists():
+            with open(_EXCLUSIONS_YAML_PATH, encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+
+        if "user_global_exclusions" not in data:
+            data["user_global_exclusions"] = []
+
+        # Check for duplicates
+        existing = [
+            str(e.get("column_name", "")).strip().lower()
+            for e in data["user_global_exclusions"]
+            if isinstance(e, dict)
+        ]
+        if column_name.lower() in existing:
+            return False  # Already exists
+
+        data["user_global_exclusions"].append({
+            "column_name":  column_name.lower(),
+            "reason":       reason,
+            "applies_to":   ["source", "target"],
+            "added_by":     added_by or "CLI",
+            "date_added":   datetime.date.today().isoformat(),
+        })
+
+        _EXCLUSIONS_YAML_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(_EXCLUSIONS_YAML_PATH, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        return True
+    except Exception:
+        return False
+
+
+def _get_all_exclusions() -> list:
+    """
+    Return merged list of all globally excluded column names (lowercase).
+    Combines: STATIC_EXCLUDE_COLUMNS + user_global_exclusions from exclusions.yaml.
+    Applied to BOTH source and target, across ALL databases.
+    """
+    static = [c.lower() for c in STATIC_EXCLUDE_COLUMNS]
+    user   = _load_global_user_exclusions()
+    seen   = set()
+    merged = []
+    for c in static + user:
+        if c not in seen:
+            seen.add(c)
+            merged.append(c)
+    return merged
 
 _PROFILES_PATH = Path.home() / ".migration-validator" / "profiles.json"
 
@@ -371,33 +466,76 @@ def _get_display_models(verbose_probe: bool = False) -> list:
 
 def _select_model_interactive(current_model: str) -> str:
     """
-    Show a numbered, provider-grouped model list and let the user choose.
-    Only working models (verified against the DIAL API) are shown.
+    Show a numbered model list and let the user choose.
+    Adapts to active backend:
+      - Claude direct: shows CLAUDE_DIRECT_MODELS, saves to CLAUDE_MODEL env var
+      - EPAM DIAL:     shows AVAILABLE_MODELS (probed), saves to DIAL_MODEL env var
     Returns the selected model name (unchanged if user presses Enter).
     """
-    from ai_transformation.ai_rule_mapper import MODEL_DESCRIPTIONS
+    from ai_transformation.ai_rule_mapper import MODEL_DESCRIPTIONS, CLAUDE_DIRECT_MODELS
 
     _head("🤖  AI MODEL SELECTION")
     print()
 
-    dial_key = os.getenv("DIAL_API_KEY", "")
+    dial_key   = os.getenv("DIAL_API_KEY", "")
+    claude_key = os.getenv("CLAUDE_API_KEY", "")
+
+    # ── Claude direct backend ────────────────────────────────────────────
+    if claude_key and not dial_key:
+        current_model = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022")
+        print(f"  Backend       : {_C.CYAN}Claude Direct{_C.RESET}  (DIAL_API_KEY not set)")
+        print(f"  Current model : {_C.GREEN}{current_model}{_C.RESET}")
+        print()
+        print(f"  {'#':<4} {'Model ID':<42} Description")
+        _sep("─", 78)
+
+        for idx, model in enumerate(CLAUDE_DIRECT_MODELS, 1):
+            info   = MODEL_DESCRIPTIONS.get(model, ("Anthropic", model, "Claude direct API"))
+            marker = f"  {_C.GREEN}← current{_C.RESET}" if model == current_model else ""
+            print(
+                f"    {_C.CYAN}[{idx}]{_C.RESET}  "
+                f"{model:<42} {_C.DIM}{info[2]}{_C.RESET}{marker}"
+            )
+
+        print(f"\n    {_C.DIM}[Enter]  Keep current model ({current_model}){_C.RESET}")
+        print()
+
+        choice = input("  Select model number (or press Enter to keep current): ").strip()
+        if not choice:
+            return current_model
+        try:
+            num = int(choice) - 1
+            if 0 <= num < len(CLAUDE_DIRECT_MODELS):
+                selected = CLAUDE_DIRECT_MODELS[num]
+                # Persist to CLAUDE_MODEL env var for this session
+                os.environ["CLAUDE_MODEL"] = selected
+                _ok(f"Claude model set to: {selected}")
+                _dim("To persist: update CLAUDE_MODEL in .env")
+                return selected
+            else:
+                _warn(f"Invalid choice '{choice}'. Keeping current model.")
+                return current_model
+        except ValueError:
+            _warn(f"Invalid input '{choice}'. Keeping current model.")
+            return current_model
+
+    # ── EPAM DIAL backend ───────────────────────────────────────────────
     if not dial_key:
-        _warn("DIAL_API_KEY is not set — AI mode is inactive.")
-        _dim("Model selection has no effect until DIAL_API_KEY is configured in .env.")
-        print()
-        from ai_transformation import AVAILABLE_MODELS
-        display_models = AVAILABLE_MODELS
-    else:
-        _dim("Checking which models are available on your API key (cached 24h)...")
-        display_models = _get_display_models()
-        _ok(f"{len(display_models)} working model(s) found")
-        print()
+        _warn("No API key configured — AI mode is inactive.")
+        _dim("Set DIAL_API_KEY (EPAM DIAL) or CLAUDE_API_KEY (Anthropic direct) in .env")
+        _dim("Or run: python validate_cli.py  →  choose [8] Configure API key")
+        return current_model
+
+    _dim("Checking which DIAL models are available (cached 24h)...")
+    display_models = _get_display_models()
+    _ok(f"{len(display_models)} working DIAL model(s) found")
+    print()
 
     print(f"  Current model : {_C.GREEN}{current_model}{_C.RESET}\n")
     print(f"  {'#':<4} {'Provider':<12} {'Model ID':<36} Description")
     _sep("─", 80)
 
-    # Group by provider for readability
+    # Group by provider
     by_provider: dict = {}
     providers_seen = []
     for model in display_models:
@@ -408,7 +546,7 @@ def _select_model_interactive(current_model: str) -> str:
             providers_seen.append(provider)
         by_provider[provider].append((model, info[2]))
 
-    numbered: list = []  # (idx, model)
+    numbered: list = []
     idx = 1
     for provider in providers_seen:
         for model, desc in by_provider[provider]:
@@ -432,7 +570,9 @@ def _select_model_interactive(current_model: str) -> str:
         num = int(choice) - 1
         if 0 <= num < len(numbered):
             selected = numbered[num]
-            _ok(f"Model selected: {selected}")
+            os.environ["DIAL_MODEL"] = selected
+            _ok(f"DIAL model selected: {selected}")
+            _dim("To persist: update DIAL_MODEL in .env")
             return selected
         else:
             _warn(f"Invalid choice '{choice}'. Keeping current model.")
@@ -443,17 +583,52 @@ def _select_model_interactive(current_model: str) -> str:
 
 
 def _list_models_cmd():
-    """Print available (working) models and exit."""
+    """Print available models — adapts to active backend (DIAL or Claude direct)."""
     from ai_transformation import AVAILABLE_MODELS
-    from ai_transformation.ai_rule_mapper import MODEL_DESCRIPTIONS
+    from ai_transformation.ai_rule_mapper import MODEL_DESCRIPTIONS, CLAUDE_DIRECT_MODELS
 
     _banner()
+
+    dial_key   = os.getenv("DIAL_API_KEY", "")
+    claude_key = os.getenv("CLAUDE_API_KEY", "")
+
+    # ── CLAUDE DIRECT BACKEND ─────────────────────────────────────────────
+    if claude_key and not dial_key:
+        current = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022")
+        _head("🤖  AVAILABLE AI MODELS  (Anthropic Claude Direct)")
+        print()
+        print(f"  Backend       : {_C.CYAN}Claude Direct{_C.RESET}  (DIAL_API_KEY not set)")
+        print(f"  CLAUDE_API_KEY: {_C.GREEN}✓ configured{_C.RESET}")
+        print(f"  Current model : {_C.GREEN}{current}{_C.RESET}")
+        print()
+        print(f"  {_C.BOLD}To switch models: update CLAUDE_MODEL in .env  or run [8] Configure API key{_C.RESET}")
+        print()
+        print(f"  {'#':<4} {'Provider':<12} {'Model ID':<40} Description")
+        _sep("─", 90)
+
+        for idx, model in enumerate(CLAUDE_DIRECT_MODELS, 1):
+            info   = MODEL_DESCRIPTIONS.get(model, ("Anthropic", model, "Claude direct API"))
+            marker = f"  {_C.GREEN}← active{_C.RESET}" if model == current else ""
+            print(
+                f"  {_C.DIM}{idx:<4}{_C.RESET}"
+                f"{_C.YELLOW}{'Anthropic':<12}{_C.RESET}"
+                f"{_C.CYAN}{model:<40}{_C.RESET}"
+                f"{_C.DIM}{info[2]}{_C.RESET}{marker}"
+            )
+        print()
+        _dim(f"Showing {len(CLAUDE_DIRECT_MODELS)} Claude direct model(s).")
+        _dim("To change: update CLAUDE_MODEL=<model_name> in .env")
+        _dim("To switch to DIAL: set DIAL_API_KEY in .env (takes priority over Claude)")
+        print()
+        return
+
+    # ── EPAM DIAL BACKEND (default) ───────────────────────────────────────
     _head("🤖  AVAILABLE AI MODELS  (via EPAM DIAL)")
     print()
 
-    dial_key = os.getenv("DIAL_API_KEY", "")
-    current  = os.getenv("DIAL_MODEL", "gpt-4o")
-    status   = f"{_C.GREEN}✓ ACTIVE{_C.RESET}" if dial_key else f"{_C.YELLOW}✗ NOT CONFIGURED{_C.RESET}"
+    current = os.getenv("DIAL_MODEL", "gpt-4o")
+    status  = f"{_C.GREEN}✓ ACTIVE{_C.RESET}" if dial_key else f"{_C.YELLOW}✗ NOT CONFIGURED{_C.RESET}"
+    print(f"  Backend       : {_C.GREEN}EPAM DIAL{_C.RESET}")
     print(f"  DIAL API Key  : {status}")
     print(f"  Current model : {_C.GREEN}{current}{_C.RESET}")
     print()
@@ -466,10 +641,11 @@ def _list_models_cmd():
             + (f"  ({skipped} unavailable — hidden)" if skipped else ""))
     else:
         display_models = AVAILABLE_MODELS
-        _warn("No API key — showing all models (availability not verified)")
+        _warn("No DIAL API key — showing all models (availability not verified)")
+        _dim("  To use Claude instead: set CLAUDE_API_KEY in .env")
     print()
 
-    # Group models by provider
+    # Group by provider
     providers_seen = []
     by_provider: dict = {}
     for model in display_models:
@@ -495,9 +671,9 @@ def _list_models_cmd():
             )
             idx += 1
     print()
-    _dim(f"Showing {len(display_models)} working model(s).")
-    _dim("To set a default model, add  DIAL_MODEL=<model_name>  to your .env file.")
-    _dim("To select per-run: python validate_cli.py generate --model gpt-4o")
+    _dim(f"Showing {len(display_models)} model(s) available via EPAM DIAL.")
+    _dim("To set default: add DIAL_MODEL=<model_name> to your .env file")
+    _dim("To select per-run: python validate_cli.py generate --model gpt-4o-mini")
     _dim("To refresh availability: delete .dial_model_cache.json next to .env")
     print()
 
@@ -546,16 +722,26 @@ def cmd_generate(args):
     stats = rule_book.stats()
     _dim(f"Rule book: {stats['base_rules']} base + {stats['learned_rules']} learned = {stats['total_rules']} rules")
 
-    current_model = getattr(args, "model", None) or os.getenv("DIAL_MODEL", "gpt-4o")
+    # Pick the correct model env var based on active backend
+    _dial_key   = os.getenv("DIAL_API_KEY", "")
+    _claude_key = os.getenv("CLAUDE_API_KEY", "")
+    if getattr(args, "model", None):
+        current_model = args.model
+    elif _dial_key:
+        current_model = os.getenv("DIAL_MODEL", "gpt-4o")
+    elif _claude_key:
+        current_model = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022")
+    else:
+        current_model = os.getenv("DIAL_MODEL", "gpt-4o")
     rec = None  # set when user picks a source connection interactively
 
-    # Parse --exclude  →  merge user list with static exclusions (case-insensitive dedup)
+    # Parse --exclude  →  merge user list with ALL global exclusions (static + saved)
     exclude_raw  = getattr(args, "exclude", None) or ""
     user_exclude = [c.strip().lower() for c in exclude_raw.split(",") if c.strip()] if exclude_raw else []
-    static_lower = [c.lower() for c in STATIC_EXCLUDE_COLUMNS]
+    all_global   = _get_all_exclusions()   # static + user_global_exclusions from exclusions.yaml
     seen = set()
     exclude_cols = []
-    for c in static_lower + user_exclude:
+    for c in all_global + user_exclude:
         if c not in seen:
             seen.add(c)
             exclude_cols.append(c)
@@ -563,9 +749,8 @@ def cmd_generate(args):
     # ── Connection profile fast-path: --connection-profile <name> ────────────
     profile_name = getattr(args, "connection_profile", None)
     if profile_name:
-        rec = _resolve_connection_profile(profile_name)
-        if rec is None:
-            return
+        _warn("Connection profiles are disabled. Use credentials from .env.")
+        profile_name = None
 
     # ── Multi-table parameterized flow: --source N --tables t1,t2,... ────────
     tables_raw = getattr(args, "tables", None) or ""
@@ -652,14 +837,25 @@ def cmd_generate(args):
             sf_schema   = sf_schema   or os.getenv("SNOWFLAKE_SCHEMA",   "")
             sf_database = sf_database or os.getenv("SNOWFLAKE_DATABASE", "")
 
-    # ── Config summary ────────────────────────────────────────────────────────
-    ai_status = (
-        f"{_C.GREEN}✓ ACTIVE{_C.RESET}"
-        if os.getenv("DIAL_API_KEY")
-        else f"{_C.YELLOW}⚠ Not active — static fallback{_C.RESET}"
-    )
+    if not getattr(args, "exclude", None):
+        exclude_cols = _select_column_exclusions(rec, pg_schema, pg_table, exclude_cols)
+
+    # ── Config summary — detect active backend correctly ────────────────────
+    _dial_key_chk   = os.getenv("DIAL_API_KEY", "")
+    _claude_key_chk = os.getenv("CLAUDE_API_KEY", "")
+    if _dial_key_chk:
+        ai_status  = f"{_C.GREEN}✓ EPAM DIAL active{_C.RESET}"
+        ai_backend = "DIAL"
+    elif _claude_key_chk:
+        ai_status  = f"{_C.CYAN}✓ Claude Direct active{_C.RESET}"
+        ai_backend = "Claude"
+    else:
+        ai_status  = f"{_C.YELLOW}⚠ No API key set — set DIAL_API_KEY or CLAUDE_API_KEY{_C.RESET}"
+        ai_backend = "None"
+    _ = ai_backend  # used in summary print below
     if exclude_cols:
-        user_extra = [c for c in exclude_cols if c not in static_lower]
+        _static_set = {c.lower() for c in STATIC_EXCLUDE_COLUMNS}
+        user_extra  = [c for c in exclude_cols if c.lower() not in _static_set]
         excl_str = (
             f"\n    Static excl : {_C.DIM}{', '.join(STATIC_EXCLUDE_COLUMNS[:5])} …({len(STATIC_EXCLUDE_COLUMNS)} total){_C.RESET}"
             + (f"\n    Also excl   : {_C.YELLOW}{', '.join(user_extra)}{_C.RESET}" if user_extra else "")
@@ -673,6 +869,7 @@ def cmd_generate(args):
     AI Mode     : {ai_status}
     Model       : {_C.CYAN}{current_model}{_C.RESET}{excl_str}
 """)
+
 
     # ── Rule book review ──────────────────────────────────────────────────────
     current_model = _rule_review_step(args, current_model)
@@ -1198,7 +1395,7 @@ def cmd_connections(args):
         _warn("No .env file found. Run:  python validate_cli.py setup")
         return
 
-    registry = print_connection_registry(env_path)
+    registry = [_apply_database_registry(record) for record in print_connection_registry(env_path)]
     if not registry:
         _warn("No source connections found in .env. Run:  python validate_cli.py setup")
         return
@@ -1309,7 +1506,7 @@ def cmd_list_tables(args):
     _head("🔍  AVAILABLE TABLES  (all configured connections)")
 
     env_path = _SRC_DIR.parent / ".env"
-    registry = print_connection_registry(env_path)
+    registry = [_apply_database_registry(record) for record in print_connection_registry(env_path)]
 
     name_filter = getattr(args, "filter", None) or ""
 
@@ -1396,9 +1593,20 @@ def _env_status_block() -> str:
     except Exception:
         registry = []
 
-    dial_key      = os.getenv("DIAL_API_KEY", "")
-    current_model = os.getenv("DIAL_MODEL", "gpt-4o")
-    sf_account    = os.getenv("SNOWFLAKE_ACCOUNT", "")
+    dial_key   = os.getenv("DIAL_API_KEY", "")
+    claude_key = os.getenv("CLAUDE_API_KEY", "")
+    sf_account = os.getenv("SNOWFLAKE_ACCOUNT", "")
+
+    # Determine active backend label for status bar
+    if dial_key:
+        ai_label = f"DIAL: {os.getenv('DIAL_MODEL', 'gpt-4o')}"
+        ai_icon  = f"{_C.GREEN}✓{_C.RESET}"
+    elif claude_key:
+        ai_label = f"Claude: {os.getenv('CLAUDE_MODEL', 'claude-3-5-sonnet-20241022')}"
+        ai_icon  = f"{_C.CYAN}✓{_C.RESET}"
+    else:
+        ai_label = "no API key configured"
+        ai_icon  = f"{_C.YELLOW}⚠{_C.RESET}"
 
     lines = [f"  {_C.GREEN}✓{_C.RESET}  .env loaded"]
 
@@ -1413,10 +1621,9 @@ def _env_status_block() -> str:
         lines.append(f"  {_C.YELLOW}⚠{_C.RESET}  No source connections — run [0] Setup Wizard")
 
     sf_icon = f"{_C.GREEN}✓{_C.RESET}" if sf_account else f"{_C.YELLOW}⚠{_C.RESET}"
-    ai_icon = f"{_C.GREEN}✓{_C.RESET}" if dial_key   else f"{_C.YELLOW}⚠{_C.RESET}"
     lines.append(
         f"  {sf_icon}  Snowflake: {sf_account or 'not configured'}   "
-        f"{ai_icon}  AI: {'model=' + current_model if dial_key else 'static fallback'}"
+        f"{ai_icon}  AI: {ai_label}"
     )
     return "\n".join(lines)
 
@@ -1430,29 +1637,49 @@ def cmd_interactive():
     print(_env_status_block())
     print(f"\n  {_C.DIM}Rule Book : {stats['base_rules']} base + {stats['learned_rules']} learned = {stats['total_rules']} total rules{_C.RESET}")
 
-    saved_profiles = _profile_mgr.list_profiles()
-    profile_hint = (
-        f"  {_C.DIM}({len(saved_profiles)} saved: {', '.join(saved_profiles[:3])}{'...' if len(saved_profiles) > 3 else ''}){_C.RESET}"
-        if saved_profiles else ""
-    )
+    # Badge: count user global exclusions for display in menu
+    user_excl    = _load_global_user_exclusions()
+    excl_badge   = f"  {_C.DIM}({len(user_excl)} saved){_C.RESET}" if user_excl else ""
+
+    # Badge: show current AI model and key status
+    # IMPORTANT: Claude backend uses CLAUDE_MODEL, not DIAL_MODEL
+    dial_key      = os.getenv("DIAL_API_KEY", "")
+    claude_key    = os.getenv("CLAUDE_API_KEY", "")
+    if dial_key:
+        current_model = os.getenv("DIAL_MODEL", "gpt-4o")
+        ai_badge = f"  {_C.DIM}(DIAL: {current_model}){_C.RESET}"
+    elif claude_key:
+        current_model = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022")
+        ai_badge = f"  {_C.DIM}(Claude direct: {current_model}){_C.RESET}"
+    else:
+        current_model = os.getenv("DIAL_MODEL", "gpt-4o")
+        ai_badge = f"  {_C.YELLOW}(no API key — set DIAL_API_KEY or CLAUDE_API_KEY){_C.RESET}"
+
     print(f"""
   {_C.BOLD}What would you like to do?{_C.RESET}
 
   ── Diagnostics ──────────────────────────────────────────────────
-    {_C.MAGENTA}[c]{_C.RESET}  Connections    ← ping PostgreSQL / MS SQL Server / Athena / Snowflake
+    {_C.MAGENTA}[c]{_C.RESET}  Connections        ← ping PostgreSQL / MS SQL Server / Athena / Snowflake
 
   ── Validation Workflows ─────────────────────────────────────────
-    {_C.GREEN}[1]{_C.RESET}  Single Table   ← pick source → pick table → generate SQL + YAML
-    {_C.GREEN}[2]{_C.RESET}  Run Tables     ← pick source → pick schema → type table names → validate all
+    {_C.GREEN}[1]{_C.RESET}  Single Table       ← pick source → pick table → generate SQL + YAML
+    {_C.GREEN}[2]{_C.RESET}  Run Tables         ← pick source → pick schema → type table names → validate all
+
+  ── Exclusion Management ─────────────────────────────────────────
+    {_C.YELLOW}[E]{_C.RESET}  Global Exclusions  ← add columns excluded from ALL tables, source & target"""
+    + excl_badge +
+    f"""
 
   ── Tools ────────────────────────────────────────────────────────
-    {_C.CYAN}[3]{_C.RESET}  List tables    ← show tables in all configured databases
-    {_C.CYAN}[4]{_C.RESET}  Select AI model
+    {_C.CYAN}[3]{_C.RESET}  List tables        ← show tables in all configured databases
+    {_C.CYAN}[4]{_C.RESET}  Select AI model"""
+    + ai_badge +
+    f"""
     {_C.CYAN}[5]{_C.RESET}  View rule book
     {_C.CYAN}[6]{_C.RESET}  Add custom rule
     {_C.CYAN}[7]{_C.RESET}  List available AI models
-    {_C.CYAN}[8]{_C.RESET}  Connection profiles{profile_hint}
-    {_C.CYAN}[9]{_C.RESET}  Execute YAML        ← run source + target queries from a saved YAML, see pass/fail
+    {_C.CYAN}[8]{_C.RESET}  Configure API key  ← set/change DIAL or Claude API key in .env
+    {_C.CYAN}[9]{_C.RESET}  Execute YAML       ← run source + target queries from a saved YAML, see pass/fail
 
     {_C.DIM}[q]{_C.RESET}  Quit
 """)
@@ -1469,25 +1696,39 @@ def cmd_interactive():
     elif choice in ("3", "list-tables", "list"):
         cmd_list_tables(ns)
     elif choice in ("4", "model", "select-model"):
-        current_model = os.getenv("DIAL_MODEL", "gpt-4o")
+        # Read the correct current model depending on active backend
+        _dk = os.getenv("DIAL_API_KEY", "")
+        _ck = os.getenv("CLAUDE_API_KEY", "")
+        if _ck and not _dk:
+            current_model = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022")
+        else:
+            current_model = os.getenv("DIAL_MODEL", "gpt-4o")
         new_model = _select_model_interactive(current_model)
-        os.environ["DIAL_MODEL"] = new_model
-        _ok(f"Model set to '{new_model}' for this session.")
-        _dim("To persist: update DIAL_MODEL in your .env file.")
+        # Persist to the correct env var
+        if _ck and not _dk:
+            os.environ["CLAUDE_MODEL"] = new_model
+            _ok(f"Claude model set to '{new_model}' for this session.")
+            _dim("To persist: update CLAUDE_MODEL in your .env file.")
+        else:
+            os.environ["DIAL_MODEL"] = new_model
+            _ok(f"DIAL model set to '{new_model}' for this session.")
+            _dim("To persist: update DIAL_MODEL in your .env file.")
     elif choice in ("5", "rules"):
         cmd_rules(ns)
     elif choice in ("6", "add-rule", "add"):
         cmd_add_rule(ns)
     elif choice in ("7", "list-models", "models"):
         _list_models_cmd()
-    elif choice in ("8", "profiles", "profile"):
-        cmd_profiles(ns)
+    elif choice in ("e", "exclusion", "exclusions", "add-exclusion"):
+        cmd_add_exclusion(ns)
+    elif choice in ("8", "api-key", "configure-api", "apikey"):
+        cmd_configure_api_key(ns)
     elif choice in ("9", "execute", "run-yaml", "exec"):
         cmd_execute_yaml(ns)
     elif choice in ("q", "quit", "exit"):
         _dim("Bye!")
     else:
-        _warn(f"Unknown choice '{choice}'. Please enter 1–9, c, or q.")
+        _warn(f"Unknown choice '{choice}'. Please enter 1-9, c, e, or q.")
 
 
 def _pick_source_connection() -> Optional[dict]:
@@ -1824,9 +2065,26 @@ def _get_connection_by_index(index: int) -> Optional[dict]:
     registry = print_connection_registry(env_path)
     matches = [r for r in registry if r["index"] == index]
     if matches:
-        return matches[0]
+        return _apply_database_registry(matches[0])
     _err(f"No connection found for SRC_{index} in .env. Run: python validate_cli.py connections")
     return None
+
+
+def _apply_database_registry(record: dict) -> dict:
+    """Fill missing database/schema metadata without loading credentials."""
+    import yaml
+
+    fallback_path = _SRC_DIR.parent / "config" / "database_registry.yaml"
+    try:
+        with open(fallback_path, encoding="utf-8") as handle:
+            fallback = yaml.safe_load(handle) or {}
+        key = record.get("prefix", f"SRC_{record.get('index', 1)}").rstrip("_")
+        metadata = fallback.get("databases", {}).get(key, {})
+        record["database"] = record.get("database") or metadata.get("database", "")
+        record["schema"] = record.get("schema") or metadata.get("schema", "")
+    except (OSError, yaml.YAMLError):
+        pass
+    return record
 
 
 def _override_source_env(rec: dict) -> None:
@@ -1864,6 +2122,550 @@ def _make_source_extractor(rec: dict):
         auth=rec.get("auth", ""),
         s3_output=rec.get("s3_output", ""),
     )
+
+
+def _resolve_yaml_source(source_type: str, current: dict) -> dict:
+    """Resolve a YAML block to the configured source matching its DB type."""
+    wanted = _normalize_db_type(source_type or current.get("type", "postgresql"))
+    try:
+        from setup_wizard import print_connection_registry
+        registry = [_apply_database_registry(record) for record in print_connection_registry(_SRC_DIR.parent / ".env")]
+        for rec in registry:
+            if _normalize_db_type(rec.get("db_type", "")) == wanted:
+                return {
+                    "type": wanted,
+                    "host": rec.get("host", ""),
+                    "port": rec.get("port", "5432"),
+                    "database": rec.get("database", ""),
+                    "username": rec.get("username", ""),
+                    "password": os.getenv(f"{rec.get('prefix', '')}PASSWORD", ""),
+                    "schema": rec.get("schema", "public"),
+                    "auth": rec.get("auth", ""),
+                }
+    except Exception:
+        pass
+    if _normalize_db_type(current.get("type", "")) == wanted:
+        return current
+    return {**current, "type": wanted}
+
+
+def _select_column_exclusions(rec: dict, schema: str, table: str, initial=None) -> list:
+    """
+    Interactive column exclusion prompt — two options:
+
+      Option G — GLOBAL: exclude this column from ALL tables, BOTH source and
+                 target, regardless of database. Saved permanently to
+                 config/exclusions.yaml under user_global_exclusions.
+
+      Option T — TABLE-ONLY: exclude column only for this specific table run.
+                 Not saved anywhere; applies to current session only.
+
+    Shows every column in the table with auto-excluded columns marked [auto].
+    """
+    all_excluded = _get_all_exclusions()      # static + user global
+    selected     = list(initial or [])
+
+    # Fetch live columns from source
+    names = []
+    try:
+        extractor = _make_source_extractor(rec)
+        columns   = extractor.extract_columns(schema, table)
+        names     = [getattr(col, "column_name", str(col)) for col in columns]
+    except Exception as exc:
+        _warn(f"Could not load columns for {table}: {exc}")
+        _dim("You can still type column names manually.")
+
+    all_excl_set = {c.lower() for c in all_excluded}
+
+    # ── Show column list ──────────────────────────────────────────────────────
+    print(f"\n  {_C.BOLD}{_C.CYAN}{'─' * 68}{_C.RESET}")
+    print(f"  {_C.BOLD}COLUMN EXCLUSION — Table: {table}{_C.RESET}")
+    print(f"  {_C.DIM}Auto-excluded columns (marked [auto]) are skipped in source AND target.{_C.RESET}")
+    print(f"  {_C.BOLD}{_C.CYAN}{'─' * 68}{_C.RESET}\n")
+
+    if names:
+        for idx, name in enumerate(names, 1):
+            if name.lower() in all_excl_set:
+                print(
+                    f"    {_C.DIM}[{idx:>2}]{_C.RESET}  "
+                    f"{_C.DIM}{name:<35}{_C.RESET}  "
+                    f"{_C.YELLOW}[auto-excluded]{_C.RESET}"
+                )
+            else:
+                print(f"    {_C.CYAN}[{idx:>2}]{_C.RESET}  {_C.GREEN}{name}{_C.RESET}")
+    else:
+        _dim("  (column list unavailable — type names manually)")
+
+    # ── Show exclusion options ────────────────────────────────────────────────
+    print(f"\n  {_C.BOLD}Exclusion Options:{_C.RESET}")
+    print(f"    {_C.GREEN}[G]{_C.RESET}  Global  — exclude column(s) from ALL tables, source & target")
+    print(f"              Saved permanently to config/exclusions.yaml")
+    print(f"    {_C.CYAN}[T]{_C.RESET}  Table   — exclude column(s) for THIS table only (this run)")
+    print(f"    {_C.DIM}[N]{_C.RESET}  None    — no additional exclusions (just keep [auto] ones)")
+    print()
+
+    scope_choice = input("  Choose exclusion scope [G/T/N]: ").strip().upper()
+
+    if scope_choice in ("", "N", "NO", "NONE"):
+        return selected
+
+    if scope_choice not in ("G", "T"):
+        _warn(f"Unknown choice '{scope_choice}'. No additional exclusions applied.")
+        return selected
+
+    # ── Collect column names / numbers ────────────────────────────────────────
+    print()
+    if scope_choice == "G":
+        print(f"  {_C.BOLD}{_C.GREEN}GLOBAL EXCLUSION{_C.RESET}  — column will be excluded from ALL tables forever.")
+    else:
+        print(f"  {_C.BOLD}{_C.CYAN}TABLE-ONLY EXCLUSION{_C.RESET}  — column excluded from this run only.")
+
+    print(f"  {_C.DIM}Enter column numbers or names (comma-separated). Example:  3,7  or  discount_code,ref_id{_C.RESET}")
+    raw = input("  Columns to exclude: ").strip()
+    if not raw:
+        _dim("  No columns entered — skipped.")
+        return selected
+
+    by_lower  = {n.lower(): n for n in names}
+    new_cols  = []
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            idx = int(token)
+            if 1 <= idx <= len(names):
+                new_cols.append(names[idx - 1])
+            else:
+                _warn(f"  Column number {idx} out of range — skipped.")
+        except ValueError:
+            new_cols.append(by_lower.get(token.lower(), token))
+
+    if not new_cols:
+        return selected
+
+    # ── Global: ask reason and persist ───────────────────────────────────────
+    if scope_choice == "G":
+        print()
+        print(f"  {_C.BOLD}These column(s) will be excluded globally:{_C.RESET}")
+        for col in new_cols:
+            print(f"    {_C.YELLOW}•{_C.RESET}  {col}")
+        print()
+        reason = input(
+            f"  {_C.BOLD}Reason for global exclusion{_C.RESET} "
+            f"{_C.DIM}(e.g. 'CDC metadata', 'PII policy', 'No target equivalent'){_C.RESET}: "
+        ).strip()
+        if not reason:
+            reason = "User-defined global exclusion"
+
+        saved   = []
+        skipped = []
+        for col in new_cols:
+            ok = _save_global_user_exclusion(col, reason)
+            if ok:
+                saved.append(col)
+                selected.append(col)
+            else:
+                skipped.append(col)   # Already existed — still apply this run
+                selected.append(col)
+
+        if saved:
+            _ok(
+                f"Saved {len(saved)} global exclusion(s) to "
+                f"config/exclusions.yaml → user_global_exclusions"
+            )
+            for col in saved:
+                print(f"    {_C.GREEN}✓{_C.RESET}  {col}  ({reason})")
+        if skipped:
+            _dim(f"  Already globally excluded (re-applied this run): {', '.join(skipped)}")
+
+    # ── Table-only: just add to current run ───────────────────────────────────
+    else:
+        for col in new_cols:
+            selected.append(col)
+        _ok(f"Table-only exclusion applied for this run: {', '.join(new_cols)}")
+        _dim("  These columns are NOT saved — exclusion applies to this table only.")
+
+    # Dedup while preserving order
+    deduped = []
+    seen    = set()
+    for name in selected:
+        if name.lower() not in seen:
+            seen.add(name.lower())
+            deduped.append(name)
+    return deduped
+
+
+def cmd_configure_api_key(args):
+    """
+    Wizard: configure AI API key in .env
+
+    Supports two modes:
+      1. EPAM DIAL  (recommended for EPAM employees)
+         Uses DIAL_API_KEY + DIAL_API_BASE — proxies to any model (GPT, Claude, Gemini, etc.)
+         One key, many models, on EPAM VPN.
+
+      2. Claude Direct  (Anthropic API — no DIAL/VPN needed)
+         Uses CLAUDE_API_KEY — calls Anthropic API directly.
+         Limited to Claude models only.
+    """
+    _banner()
+    _head("\U0001f511  CONFIGURE AI API KEY")
+
+    env_path = _SRC_DIR.parent / ".env"
+
+    # Read existing .env
+    env_lines = []
+    if env_path.exists():
+        env_lines = env_path.read_text(encoding="utf-8").splitlines()
+
+    def _get_env_val(key: str) -> str:
+        for line in env_lines:
+            if line.startswith(f"{key}="):
+                return line[len(key) + 1:].strip()
+        return os.getenv(key, "")
+
+    dial_key      = _get_env_val("DIAL_API_KEY")
+    dial_base     = _get_env_val("DIAL_API_BASE") or "https://ai-proxy.lab.epam.com"
+    claude_key    = _get_env_val("CLAUDE_API_KEY")
+    current_model = _get_env_val("DIAL_MODEL") or "gpt-4o"
+
+    # Show current state
+    dial_status   = f"{_C.GREEN}*** configured ***{_C.RESET}" if dial_key   else f"{_C.YELLOW}NOT SET{_C.RESET}"
+    claude_status = f"{_C.GREEN}*** configured ***{_C.RESET}" if claude_key else f"{_C.YELLOW}NOT SET{_C.RESET}"
+
+    print(f"""
+  {_C.BOLD}Current AI Configuration:{_C.RESET}
+    DIAL_API_KEY   : {dial_status}
+    CLAUDE_API_KEY : {claude_status}
+    DIAL_API_BASE  : {_C.DIM}{dial_base}{_C.RESET}
+    DIAL_MODEL     : {_C.CYAN}{current_model}{_C.RESET}
+
+  {_C.BOLD}Which API do you want to configure?{_C.RESET}
+
+    {_C.GREEN}[1]{_C.RESET}  EPAM DIAL         ← recommended for EPAM employees
+              One API key → access to GPT-4o, Claude, Gemini, Llama, Mistral
+              Requires EPAM VPN: https://ai-proxy.lab.epam.com
+
+    {_C.CYAN}[2]{_C.RESET}  Claude Direct     ← Anthropic API (no VPN/DIAL needed)
+              Claude models only → claude-3-5-sonnet, claude-3-opus, etc.
+              Get key at: https://console.anthropic.com
+
+    {_C.DIM}[3]{_C.RESET}  Change DIAL model  ← set default model in .env
+    {_C.DIM}[s]{_C.RESET}  Show current config
+    {_C.DIM}[q]{_C.RESET}  Cancel
+""")
+
+    choice = input("  Choice [1/2/3/s/q]: ").strip().lower()
+
+    if choice in ("q", "cancel", ""):
+        _dim("Cancelled.")
+        return
+
+    # ── Option S: Show full config ─────────────────────────────────────────
+    if choice in ("s", "show"):
+        print(f"\n  {_C.BOLD}Full AI Config in .env:{_C.RESET}")
+        sensitive_keys = {"DIAL_API_KEY", "CLAUDE_API_KEY"}
+        ai_keys = {"DIAL_API_KEY", "DIAL_API_BASE", "DIAL_API_VERSION",
+                   "DIAL_MODEL", "CLAUDE_API_KEY", "CLAUDE_MODEL"}
+        for line in env_lines:
+            key_part = line.split("=")[0].strip() if "=" in line else ""
+            if key_part in ai_keys:
+                val = line.split("=", 1)[1].strip() if "=" in line else ""
+                if key_part in sensitive_keys and len(val) > 8:
+                    val = val[:4] + "***" + val[-4:]  # mask the middle
+                print(f"    {_C.CYAN}{key_part}{_C.RESET} = {val}")
+        print()
+        return
+
+    # ── Option 3: Change DIAL model ────────────────────────────────────────
+    if choice == "3":
+        print(f"\n  {_C.BOLD}Available models via DIAL:{_C.RESET}")
+        from ai_transformation.ai_rule_mapper import AVAILABLE_MODELS, MODEL_DESCRIPTIONS
+        for i, model in enumerate(AVAILABLE_MODELS, 1):
+            info   = MODEL_DESCRIPTIONS.get(model, ("Other", model, ""))
+            marker = f"  {_C.GREEN}<-- current{_C.RESET}" if model == current_model else ""
+            print(
+                f"    {_C.DIM}[{i}]{_C.RESET}  {_C.YELLOW}{info[0]:<12}{_C.RESET}"
+                f"{_C.CYAN}{model:<38}{_C.RESET}  {_C.DIM}{info[2]}{_C.RESET}{marker}"
+            )
+        print()
+        raw = input(f"  Enter number or model name [{current_model}]: ").strip()
+        if not raw:
+            _dim("No change.")
+            return
+        try:
+            idx = int(raw) - 1
+            new_model = AVAILABLE_MODELS[idx] if 0 <= idx < len(AVAILABLE_MODELS) else raw
+        except ValueError:
+            new_model = raw
+        _update_env_file(env_path, env_lines, "DIAL_MODEL", new_model)
+        _ok(f"DIAL_MODEL set to '{new_model}' in .env")
+        os.environ["DIAL_MODEL"] = new_model
+        return
+
+    # ── Option 1: EPAM DIAL ────────────────────────────────────────────────
+    if choice == "1":
+        print(f"""
+  {_C.BOLD}{_C.GREEN}EPAM DIAL API Key Setup{_C.RESET}
+  {_C.DIM}Get your key at: https://ai-proxy.lab.epam.com  (EPAM VPN required)
+  Your key grants access to: GPT-4o, Claude Sonnet, Gemini, Llama, Mistral
+
+  Key format: sk-... or a long alphanumeric string
+  {_C.RESET}""")
+        new_key = input("  Paste your DIAL_API_KEY: ").strip()
+        if not new_key:
+            _warn("No key entered. Cancelled.")
+            return
+
+        print(f"\n  {_C.DIM}DIAL_API_BASE default: {dial_base}{_C.RESET}")
+        new_base = input(f"  DIAL_API_BASE (press Enter to keep default): ").strip() or dial_base
+
+        print(f"\n  {_C.DIM}Recommended: gpt-4o (best) | gpt-4o-mini (fast) | anthropic.claude-sonnet-5{_C.RESET}")
+        new_model = input(f"  DIAL_MODEL (press Enter to keep '{current_model}'): ").strip() or current_model
+
+        # Preview
+        masked = new_key[:4] + "***" + new_key[-4:] if len(new_key) > 8 else "***"
+        print(f"\n  {_C.BOLD}Will write to .env:{_C.RESET}")
+        print(f"    DIAL_API_KEY   = {masked}")
+        print(f"    DIAL_API_BASE  = {new_base}")
+        print(f"    DIAL_MODEL     = {new_model}")
+        print()
+        if input("  Save to .env? [Y/n]: ").strip().lower() in ("n", "no"):
+            _dim("Cancelled.")
+            return
+
+        _update_env_file(env_path, env_lines, "DIAL_API_KEY",     new_key)
+        _update_env_file(env_path, env_lines, "DIAL_API_BASE",    new_base)
+        _update_env_file(env_path, env_lines, "DIAL_API_VERSION", "2025-04-01-preview")
+        _update_env_file(env_path, env_lines, "DIAL_MODEL",       new_model)
+        os.environ["DIAL_API_KEY"]  = new_key
+        os.environ["DIAL_API_BASE"] = new_base
+        os.environ["DIAL_MODEL"]    = new_model
+        _ok("EPAM DIAL API key saved to .env \u2713")
+        _ok(f"Model set to '{new_model}' \u2713")
+        _dim(".env is git-ignored. Your key is safe.")
+        return
+
+    # ── Option 2: Claude Direct ────────────────────────────────────────────
+    if choice == "2":
+        print(f"""
+  {_C.BOLD}{_C.CYAN}Anthropic Claude Direct API Key Setup{_C.RESET}
+  {_C.DIM}Get your key at: https://console.anthropic.com  (no VPN needed)
+  Available models: claude-3-5-sonnet, claude-3-opus, claude-3-haiku
+
+  Note: CLAUDE_API_KEY is used ONLY when DIAL_API_KEY is NOT set.
+        If both are set, DIAL_API_KEY (EPAM DIAL) takes priority.
+  {_C.RESET}""")
+        new_key = input("  Paste your CLAUDE_API_KEY (sk-ant-...): ").strip()
+        if not new_key:
+            _warn("No key entered. Cancelled.")
+            return
+        if not new_key.startswith("sk-ant-"):
+            _warn("Claude keys usually start with 'sk-ant-api03-...'. Please verify.")
+
+        claude_models = [
+            "claude-3-5-sonnet-20241022",
+            "claude-3-opus-20240229",
+            "claude-3-haiku-20240307",
+            "claude-3-5-haiku-20241022",
+        ]
+        print(f"\n  {_C.BOLD}Choose default Claude model:{_C.RESET}")
+        for i, m in enumerate(claude_models, 1):
+            print(f"    {_C.CYAN}[{i}]{_C.RESET}  {m}")
+        print()
+        raw_model = input("  Model number [1 = claude-3-5-sonnet]: ").strip()
+        try:
+            midx = int(raw_model) - 1
+            claude_model = claude_models[midx] if 0 <= midx < len(claude_models) else claude_models[0]
+        except (ValueError, IndexError):
+            claude_model = claude_models[0]
+
+        masked = new_key[:8] + "***" + new_key[-4:] if len(new_key) > 12 else "***"
+        print(f"\n  {_C.BOLD}Will write to .env:{_C.RESET}")
+        print(f"    CLAUDE_API_KEY = {masked}")
+        print(f"    CLAUDE_MODEL   = {claude_model}")
+        print()
+        if input("  Save to .env? [Y/n]: ").strip().lower() in ("n", "no"):
+            _dim("Cancelled.")
+            return
+
+        _update_env_file(env_path, env_lines, "CLAUDE_API_KEY", new_key)
+        _update_env_file(env_path, env_lines, "CLAUDE_MODEL",   claude_model)
+        os.environ["CLAUDE_API_KEY"] = new_key
+        os.environ["CLAUDE_MODEL"]   = claude_model
+        _ok("Claude API key saved to .env \u2713")
+        _ok(f"Default Claude model: {claude_model} \u2713")
+        _dim("DIAL_API_KEY takes priority if set. Remove it to use Claude directly.")
+        _dim(".env is git-ignored. Your key is safe.")
+        return
+
+    _warn(f"Unknown choice '{choice}'. Cancelled.")
+
+
+def _update_env_file(env_path, env_lines: list, key: str, value: str) -> None:
+    """
+    Update or append a KEY=VALUE line in the .env file.
+    Reads the current file, replaces the key if found, appends if not.
+    """
+    updated   = False
+    new_lines = []
+    for line in env_lines:
+        stripped = line.split("=")[0].strip() if "=" in line else line
+        if stripped == key:
+            new_lines.append(f"{key}={value}")
+            updated = True
+        else:
+            new_lines.append(line)
+    if not updated:
+        new_lines.append(f"{key}={value}")
+
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    # Reflect changes back into env_lines so subsequent calls in same session see it
+    env_lines.clear()
+    env_lines.extend(new_lines)
+
+
+def cmd_add_exclusion(args):
+    """
+    Wizard: add a global column exclusion to config/exclusions.yaml.
+
+    Global exclusions are applied:
+      - In BOTH source and target tables
+      - Across ALL databases (PostgreSQL, MSSQL, Athena, Snowflake)
+      - On EVERY validation run — permanently
+
+    Use this for columns like CDC metadata, PII columns, or any column
+    that should never be validated regardless of the table.
+    """
+    _banner()
+    _head("🚫  ADD GLOBAL COLUMN EXCLUSION")
+
+    print(f"""
+  {_C.BOLD}What is a Global Exclusion?{_C.RESET}
+  {_C.DIM}A column added here is excluded from validation in:
+    • ALL source tables  (PostgreSQL / MSSQL / Athena — any database)
+    • ALL target tables  (Snowflake)
+    • EVERY run          (saved permanently to config/exclusions.yaml)
+
+  Use this for:
+    • CDC / ETL metadata columns   (etl_batch_id, load_ts, dw_insert_dt)
+    • Fivetran system columns      (_fivetran_synced, _fivetran_deleted)
+    • PII / sensitive columns      (social_security_no, credit_card_no)
+    • Audit columns added post-migration (migrated_by, migrated_at)
+    • Columns with no target equivalent in any table
+
+  You can also exclude columns PER TABLE ONLY during the generate workflow.
+  {_C.RESET}""")
+
+    # ── Show existing global exclusions ──────────────────────────────────────
+    existing = _load_global_user_exclusions()
+    static   = [c.lower() for c in STATIC_EXCLUDE_COLUMNS]
+
+    print(f"  {_C.BOLD}Currently auto-excluded (built-in, {len(static)} columns):{_C.RESET}")
+    for col in STATIC_EXCLUDE_COLUMNS:
+        print(f"    {_C.DIM}• {col}{_C.RESET}")
+
+    if existing:
+        print(f"\n  {_C.BOLD}Your saved global exclusions ({len(existing)} columns):{_C.RESET}")
+        import yaml
+        try:
+            with open(_EXCLUSIONS_YAML_PATH, encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            for entry in data.get("user_global_exclusions", []):
+                col    = entry.get("column_name", "")
+                reason = entry.get("reason", "")
+                added  = entry.get("date_added", "")
+                print(f"    {_C.YELLOW}•{_C.RESET}  {col:<35} {_C.DIM}{reason}  [{added}]{_C.RESET}")
+        except Exception:
+            for col in existing:
+                print(f"    {_C.YELLOW}•{_C.RESET}  {col}")
+    else:
+        print(f"\n  {_C.DIM}No user-defined global exclusions yet.{_C.RESET}")
+
+    print()
+    _sep()
+
+    # ── Collect new exclusion(s) ──────────────────────────────────────────────
+    print(f"\n  {_C.BOLD}Add New Global Exclusion(s){_C.RESET}")
+    print(f"  {_C.DIM}Enter one or more column names separated by commas.{_C.RESET}")
+    raw = input("  Column name(s): ").strip()
+    if not raw:
+        _warn("No column name entered. Cancelled.")
+        return
+
+    columns = [c.strip() for c in raw.split(",") if c.strip()]
+    if not columns:
+        _warn("No valid column names found. Cancelled.")
+        return
+
+    reason = input(
+        f"  {_C.BOLD}Reason{_C.RESET} "
+        f"{_C.DIM}(e.g. 'CDC metadata not migrated', 'PII column — excluded by policy'){_C.RESET}: "
+    ).strip()
+    if not reason:
+        reason = "User-defined global exclusion"
+
+    # ── Preview ───────────────────────────────────────────────────────────────
+    print(f"\n  {_C.BOLD}Preview — will be excluded from ALL tables, source + target:{_C.RESET}")
+    for col in columns:
+        print(f"    {_C.YELLOW}•{_C.RESET}  {col}  —  {_C.DIM}{reason}{_C.RESET}")
+    print()
+
+    confirm = input("  Save these global exclusions? [Y/n]: ").strip().lower()
+    if confirm in ("n", "no"):
+        _dim("Cancelled.")
+        return
+
+    saved_count   = 0
+    already_count = 0
+    for col in columns:
+        ok = _save_global_user_exclusion(col, reason)
+        if ok:
+            saved_count += 1
+            _ok(f"Saved: '{col}' — will be excluded from all tables globally")
+        else:
+            already_count += 1
+            _dim(f"  Already exists: '{col}' (skipped)")
+
+    print()
+    if saved_count:
+        _ok(
+            f"{saved_count} global exclusion(s) saved to "
+            f"config/exclusions.yaml → user_global_exclusions"
+        )
+    if already_count:
+        _dim(f"  {already_count} column(s) already excluded — no change.")
+
+    print(f"\n  {_C.DIM}File: {_EXCLUSIONS_YAML_PATH}{_C.RESET}")
+    print(f"  {_C.DIM}These exclusions take effect on the next validation run.{_C.RESET}")
+    print()
+
+
+def _canonical_validation_value(column_name: str, value):
+    """Normalize equivalent JSON/HStore representations before comparison."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    lowered_name = column_name.lower()
+    if "json" in lowered_name:
+        try:
+            import json
+            return json.dumps(json.loads(text), sort_keys=True, separators=(",", ":"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return text
+    if "hstore" in lowered_name:
+        try:
+            import json
+            if text.startswith("{"):
+                return json.dumps(json.loads(text), sort_keys=True, separators=(",", ":"))
+            pairs = re.findall(r'"([^"]+)"\s*=>\s*"([^"]*)"', text)
+            if pairs:
+                return json.dumps(dict(pairs), sort_keys=True, separators=(",", ":"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+    return text
 
 
 def _run_parameterized_tables(args, current_model: str, exclude_cols: list) -> None:
@@ -2329,7 +3131,8 @@ def cmd_multi_db(args):
     profile_name  = getattr(args, "connection_profile", None)
 
     if profile_name:
-        rec = _resolve_connection_profile(profile_name)
+        _warn("Connection profiles are disabled. Use credentials from .env.")
+        rec = _get_connection_by_index(source_index) if source_index is not None else _pick_source_connection()
     elif source_index is not None:
         rec = _get_connection_by_index(source_index)
     else:
@@ -2367,19 +3170,20 @@ def cmd_multi_db(args):
 
     pg_database = rec["database"]
 
-    # ── D: Pick Snowflake target database + schema ────────────────────────────
+    # ── D: Select columns to exclude per source table ─────────────────────────
+    exclude_raw = getattr(args, "exclude", None) or ""
+    base_exclusions = list(STATIC_EXCLUDE_COLUMNS)
+    base_exclusions.extend(c.strip() for c in exclude_raw.split(",") if c.strip())
+    table_exclusions = {
+        table: _select_column_exclusions(rec, schema, table, base_exclusions)
+        for table in source_tables
+    }
+
+    # ── E: Pick Snowflake target database + schema ────────────────────────────
     sf_database = getattr(args, "sf_database", None) or ""
     sf_schema   = getattr(args, "sf_schema",   None) or ""
     if not sf_database or not sf_schema:
         sf_database, sf_schema = _pick_snowflake_target()
-
-    # ── E: Column exclusions ──────────────────────────────────────────────────
-    exclude_raw  = getattr(args, "exclude", None) or ""
-    if not exclude_raw:
-        exclude_raw = _prompt(
-            "Columns to exclude (comma-separated, or Enter for none)", ""
-        )
-    exclude_cols = [c.strip() for c in exclude_raw.split(",") if c.strip()]
 
     # ── F: Snowflake table auto-match ─────────────────────────────────────────
     _head("SNOWFLAKE TABLE MATCHING")
@@ -2452,8 +3256,8 @@ def cmd_multi_db(args):
     print(f"    Target      : {_C.CYAN}Snowflake  {sf_database}.{sf_schema}{_C.RESET}")
     print(f"    AI Mode     : {ai_status}")
     print(f"    Model       : {_C.CYAN}{current_model}{_C.RESET}")
-    if exclude_cols:
-        print(f"    Excluded    : {_C.YELLOW}{', '.join(exclude_cols)}{_C.RESET}")
+    if any(table_exclusions.values()):
+        print(f"    Exclusions  : {_C.YELLOW}selected per table{_C.RESET}")
     print(f"\n    {_C.BOLD}Tables ({len(table_pairs)}):{_C.RESET}")
     for src, sf in table_pairs:
         print(f"      {_C.GREEN}{src:<30}{_C.RESET}  →  {_C.CYAN}{sf}{_C.RESET}")
@@ -2488,7 +3292,7 @@ def cmd_multi_db(args):
                 sf_table=sf_table,
                 sf_database=sf_database,
                 pg_database=pg_database,
-                exclude_columns=exclude_cols or None,
+                exclude_columns=table_exclusions.get(src_table) or None,
             )
             results.append((src_table, sf_table, result))
             succeeded += 1
@@ -2629,66 +3433,40 @@ def cmd_execute_yaml(args):
         _err("Please enter a number.")
         return
 
-    # ── Step 3: credentials — profile or current env ──────────────────────────
-    profiles = _profile_mgr.list_profiles()
-    print(f"\n  {_C.BOLD}Connection credentials:{_C.RESET}\n")
-    print(f"    {_C.CYAN}[0]{_C.RESET}  Use current .env settings")
-    for i, pname in enumerate(profiles, 1):
-        p = _profile_mgr.get_profile(pname)
-        sf  = p.get("snowflake", {}) if p else {}
-        src = p.get("source", {}) if p else {}
-        print(f"    {_C.CYAN}[{i}]{_C.RESET}  Profile: {_C.YELLOW}{pname}{_C.RESET}"
-              f"  {_C.DIM}({src.get('host','')} → {sf.get('database','')}.{sf.get('schema','')}){_C.RESET}")
-    print()
+    # ── Step 3: credentials — always from .env ───────────────────────────────
+    _dim("Using .env credentials.")
+    src_type = os.getenv("SOURCE_TYPE", "postgresql")
+    src_host = os.getenv("SOURCE_HOST", "localhost")
+    src_port = int(os.getenv("SOURCE_PORT", "5432"))
+    src_db = os.getenv("SOURCE_DATABASE", "")
+    src_user = os.getenv("SOURCE_USERNAME", "")
+    src_pass = os.getenv("SOURCE_PASSWORD", "")
+    src_schema = os.getenv("SOURCE_SCHEMA", "public")
+    sf_account = os.getenv("SNOWFLAKE_ACCOUNT", "")
+    sf_db = os.getenv("SNOWFLAKE_DATABASE", "")
+    sf_user = os.getenv("SNOWFLAKE_USERNAME", "")
+    sf_pass = os.getenv("SNOWFLAKE_PASSWORD", "")
+    sf_wh = os.getenv("SNOWFLAKE_WAREHOUSE", "")
+    sf_role = os.getenv("SNOWFLAKE_ROLE", "")
+    mssql_auth = os.getenv("MSSQL_AUTH", "")
 
-    raw3 = input(f"  Select credentials [0–{len(profiles)}]: ").strip()
-    try:
-        cred_idx = int(raw3)
-    except ValueError:
-        cred_idx = 0
+    metadata = _apply_database_registry({"prefix": "SRC_1_", "index": 1})
+    src_db = src_db or metadata.get("database", "")
+    src_schema = src_schema or metadata.get("schema", "public")
+    sf_metadata = _apply_database_registry({"prefix": "SNOWFLAKE_", "index": "SNOWFLAKE"})
+    sf_db = sf_db or sf_metadata.get("database", "")
+    sf_schema = os.getenv("SNOWFLAKE_SCHEMA", "") or sf_metadata.get("schema", "")
 
-    if cred_idx == 0:
-        _dim("Using current .env credentials.")
-        src_type = os.getenv("SOURCE_TYPE", "postgresql")
-        src_host = os.getenv("SOURCE_HOST", "localhost")
-        src_port = int(os.getenv("SOURCE_PORT", "5432"))
-        src_db   = os.getenv("SOURCE_DATABASE", "")
-        src_user = os.getenv("SOURCE_USERNAME", "")
-        src_pass = os.getenv("SOURCE_PASSWORD", "")
-        src_schema = os.getenv("SOURCE_SCHEMA", "public")
-        sf_account  = os.getenv("SNOWFLAKE_ACCOUNT", "")
-        sf_db       = os.getenv("SNOWFLAKE_DATABASE", "")
-        sf_user     = os.getenv("SNOWFLAKE_USERNAME", "")
-        sf_pass     = os.getenv("SNOWFLAKE_PASSWORD", "")
-        sf_wh       = os.getenv("SNOWFLAKE_WAREHOUSE", "")
-        sf_role     = os.getenv("SNOWFLAKE_ROLE", "")
-        mssql_auth  = os.getenv("MSSQL_AUTH", "")
-    elif 1 <= cred_idx <= len(profiles):
-        profile_name = profiles[cred_idx - 1]
-        profile = _profile_mgr.get_profile(profile_name)
-        if not profile:
-            _err(f"Profile '{profile_name}' could not be loaded.")
-            return
-        _ok(f"Using profile: {profile_name}")
-        src = profile.get("source", {})
-        sf  = profile.get("snowflake", {})
-        src_type   = _normalize_db_type(src.get("db_type", "postgresql"))
-        src_host   = src.get("host", "localhost")
-        src_port   = int(src.get("port", 5432))
-        src_db     = src.get("database", "")
-        src_user   = src.get("username", "")
-        src_pass   = src.get("password", "")
-        src_schema = src.get("schema", "public")
-        mssql_auth = src.get("auth", "")
-        sf_account = sf.get("account", "")
-        sf_db      = sf.get("database", "")
-        sf_user    = sf.get("username", "")
-        sf_pass    = sf.get("password", "")
-        sf_wh      = sf.get("warehouse", "")
-        sf_role    = sf.get("role", "")
-    else:
-        _err("Invalid selection.")
-        return
+    current_source = {
+        "type": src_type,
+        "host": src_host,
+        "port": src_port,
+        "database": src_db,
+        "username": src_user,
+        "password": src_pass,
+        "schema": src_schema,
+        "auth": mssql_auth,
+    }
 
     # ── Step 4: pick validation type to run ──────────────────────────────────
     # Discover all validation block names from the first table entry
@@ -2738,11 +3516,25 @@ def cmd_execute_yaml(args):
             src_label = vdata.get("source", "source")
             tgt_label = vdata.get("target", "snowflake")
 
+            # A single YAML may contain PostgreSQL and MSSQL blocks. Resolve
+            # the source independently for each block instead of reusing the
+            # connection selected for the first block.
+            block_source = _resolve_yaml_source(src_label, current_source)
+            src_type = block_source["type"]
+            src_host = block_source["host"]
+            src_port = int(block_source["port"])
+            src_db = block_source["database"]
+            src_user = block_source["username"]
+            src_pass = block_source["password"]
+            src_schema = block_source["schema"]
+            mssql_auth = block_source["auth"]
+
             print(f"\n    {_C.DIM}── {vname} ─────────────────────────────────────────{_C.RESET}")
 
             # Run source query
             src_result = None
             src_error  = None
+            src_columns = []
             try:
                 src_type_norm = _normalize_db_type(src_type)
                 if src_type_norm == "mssql":
@@ -2757,6 +3549,7 @@ def cmd_execute_yaml(args):
                     conn = pyodbc.connect(cs, timeout=30)
                     cur = conn.cursor()
                     cur.execute(src_sql)
+                    src_columns = [description[0] for description in cur.description or []]
                     rows = cur.fetchall()
                     conn.close()
                     src_result = rows
@@ -2768,6 +3561,7 @@ def cmd_execute_yaml(args):
                     )
                     cur = conn.cursor()
                     cur.execute(src_sql)
+                    src_columns = [description[0] for description in cur.description or []]
                     rows = cur.fetchall()
                     conn.close()
                     src_result = rows
@@ -2777,6 +3571,7 @@ def cmd_execute_yaml(args):
             # Run target Snowflake query
             tgt_result = None
             tgt_error  = None
+            tgt_columns = []
             try:
                 import snowflake.connector
                 sf_params = dict(account=sf_account, user=sf_user, password=sf_pass,
@@ -2788,6 +3583,7 @@ def cmd_execute_yaml(args):
                 sf_conn = snowflake.connector.connect(**sf_params)
                 sf_cur  = sf_conn.cursor()
                 sf_cur.execute(tgt_sql)
+                tgt_columns = [description[0] for description in sf_cur.description or []]
                 rows = sf_cur.fetchall()
                 sf_conn.close()
                 tgt_result = rows
@@ -2828,13 +3624,50 @@ def cmd_execute_yaml(args):
                     diff = abs(int(tv or 0) - int(sv or 0)) if sv is not None and tv is not None else "?"
                     status = f"{_C.RED}✗ FAIL{_C.RESET}  (source={sv}, target={tv}, diff={diff})"
             else:
-                row_match = (src_result == tgt_result) if (src_result and tgt_result) else False
+                # Database engines do not guarantee row order without ORDER BY.
+                # Compare normalized data validations in a deterministic order.
+                def _canonical_row(row, columns):
+                    return tuple(
+                        _canonical_validation_value(name, value)
+                        for name, value in zip(columns, row)
+                    )
+
+                comparable_source = sorted(
+                    (_canonical_row(row, src_columns) for row in src_result),
+                    key=str,
+                ) if src_result else []
+                comparable_target = sorted(
+                    (_canonical_row(row, tgt_columns) for row in tgt_result),
+                    key=str,
+                ) if tgt_result else []
+                row_match = (comparable_source == comparable_target) if (src_result is not None and tgt_result is not None) else False
                 if row_match:
                     total_passed += 1
-                    status = f"{_C.GREEN}✓ PASS{_C.RESET}  ({len(src_result)} rows match)"
+                    status = f"{_C.GREEN}✓ PASS{_C.RESET}  ({len(comparable_source)} rows match, order-independent)"
                 elif src_result and tgt_result:
                     total_failed += 1
-                    status = f"{_C.RED}✗ FAIL{_C.RESET}  (source={len(src_result)} rows, target={len(tgt_result)} rows)"
+                    mismatch_note = ""
+                    if vname.lower() == "data_validation" and src_columns and tgt_columns:
+                        source_by_key = {str(row[0]): row for row in src_result}
+                        target_by_key = {str(row[0]): row for row in tgt_result}
+                        mismatches = []
+                        for key in sorted(set(source_by_key) | set(target_by_key)):
+                            source_row = source_by_key.get(key)
+                            target_row = target_by_key.get(key)
+                            if source_row is None or target_row is None:
+                                mismatches.append(f"key={key}: missing on {'source' if source_row is None else 'target'}")
+                                continue
+                            differences = [
+                                name for name, source_value, target_value in zip(
+                                    src_columns, source_row, target_row
+                                ) if _canonical_validation_value(name, source_value)
+                                != _canonical_validation_value(name, target_value)
+                            ]
+                            if differences:
+                                mismatches.append(f"key={key}: {', '.join(differences[:4])}")
+                        if mismatches:
+                            mismatch_note = f"; mismatches={len(mismatches)} ({' | '.join(mismatches[:3])})"
+                    status = f"{_C.RED}✗ FAIL{_C.RESET}  (source={len(src_result)} rows, target={len(tgt_result)} rows{mismatch_note})"
                 else:
                     total_errors += 1
                     status = f"{_C.YELLOW}? SKIP{_C.RESET}  (no data to compare)"
@@ -2930,6 +3763,96 @@ def cmd_profiles(args):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# lint — validate generated configs before anything touches a database
+# ─────────────────────────────────────────────────────────────────────────────
+
+def cmd_lint(args):
+    """
+    Check every generated validation YAML for structural problems.
+
+    Catches, at zero cost and with no database connection:
+      - duplicate table keys (YAML keeps the last one silently)
+      - missing or misspelled required fields
+      - queries that are not SELECT statements
+      - source_name / target_name that resolve to no .env credentials
+      - YAML that has drifted from the canonical plan that produced it
+
+    Exit code 0 = clean, 1 = problems found. Safe to run in CI.
+    """
+    from validation.config_schema import validate_config_dir
+    from core.plan_store import PlanStore, PlanStoreError
+
+    _banner()
+    _head("CONFIG LINT")
+
+    config_dir = Path(args.config_dir) if args.config_dir else (_SRC_DIR.parent / "config")
+    if not config_dir.exists():
+        _err(f"Config directory not found: {config_dir}")
+        sys.exit(1)
+
+    _dim(f"Scanning {config_dir}")
+    _sep()
+
+    results = validate_config_dir(config_dir, check_credentials=not args.skip_credentials)
+
+    if not results:
+        _warn("No YAML config files found. Generate some first:")
+        _dim("python src/validate_cli.py generate --pg-table <t> --sf-table <T>")
+        sys.exit(0)
+
+    total_errors = 0
+    for path, errors in results.items():
+        rel = path.relative_to(config_dir.parent)
+        if errors:
+            total_errors += len(errors)
+            _err(f"{rel}  ({len(errors)} problem(s))")
+            for message in errors:
+                _dim(f"  → {message}")
+        else:
+            _ok(f"{rel}")
+
+    # ── Drift check: does the YAML still agree with its plan? ────────────────
+    _sep()
+    _head("PLAN ↔ CONFIG CONSISTENCY")
+    store = PlanStore()
+    plans = store.list_plans()
+    if not plans:
+        _warn("No canonical plans found in output/plans/.")
+        _dim("Column coverage cannot be verified — regenerate to record exclusions.")
+    else:
+        for plan_path in plans:
+            try:
+                plan = store.load(plan_path)
+            except PlanStoreError as exc:
+                total_errors += 1
+                _err(f"{plan_path.name}: {exc}")
+                continue
+
+            expected = config_dir / "bronze" / "data_validation" / f"{plan.source_table.lower()}.yaml"
+            if not expected.exists():
+                total_errors += 1
+                _err(f"{plan.source_table}: plan exists but {expected.name} is missing — regenerate.")
+                continue
+
+            coverage = plan.exclusion_summary()
+            marker = "✓" if coverage["coverage_pct"] >= 80 else "!"
+            _dim(
+                f"  {marker} {plan.source_table}: "
+                f"{coverage['validated']}/{coverage['total_source_columns']} columns "
+                f"({coverage['coverage_pct']}%)"
+            )
+
+    _sep()
+    if total_errors:
+        _err(f"LINT FAILED — {total_errors} problem(s) found.")
+        _dim("Configs are generated artefacts: fix by regenerating, not by hand-editing.")
+        sys.exit(1)
+
+    _ok("LINT PASSED — all configs are structurally valid.")
+    sys.exit(0)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CLI argument parser + entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -3012,6 +3935,7 @@ Multiple tables:
   python validate_cli.py batch --config tables.yaml --dry-run --verbose
 
 Utilities:
+  python validate_cli.py lint
   python validate_cli.py rules
   python validate_cli.py add-rule
   python validate_cli.py list-models
@@ -3157,6 +4081,26 @@ Utilities:
         help="AI model to use for all tables in the batch",
     )
 
+    # ── lint ──────────────────────────────────────────────────────────────────
+    lint = sub.add_parser(
+        "lint",
+        help="Validate generated YAML configs (duplicates, schema, .env refs) — no DB needed",
+    )
+    lint.add_argument(
+        "--config-dir",
+        dest="config_dir",
+        default=None,
+        metavar="DIR",
+        help="Config directory to scan (default: ./config)",
+    )
+    lint.add_argument(
+        "--skip-credentials",
+        dest="skip_credentials",
+        action="store_true",
+        default=False,
+        help="Skip checking that source_name/target_name resolve in the environment",
+    )
+
     # ── rules ─────────────────────────────────────────────────────────────────
     sub.add_parser("rules", help="Show the full rule book (base + learned)")
 
@@ -3192,6 +4136,7 @@ def main():
         "generate":    cmd_generate,
         "multi":       cmd_multi_db,
         "batch":       cmd_batch,
+        "lint":        cmd_lint,
         "rules":       cmd_rules,
         "add-rule":    cmd_add_rule,
         "list-models": lambda _: _list_models_cmd(),

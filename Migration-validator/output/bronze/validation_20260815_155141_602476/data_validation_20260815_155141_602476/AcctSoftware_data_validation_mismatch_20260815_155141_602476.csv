@@ -1,0 +1,3 @@
+pk,row_status,details
+18,MISSING_IN_TARGET,Row 18 exists in source but not in target
+19,MISSING_IN_TARGET,Row 19 exists in source but not in target

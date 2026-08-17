@@ -45,16 +45,13 @@ __description__ = (
     "Multi-source, batch processing, PK-aware SQL generation."
 )
 
-# ── Rule registry helpers (no DB connections at import time) ──────────────────
-from rules import get_rule_for_type, get_registry
+# ── Rule registry helpers (optional, imported on demand) ────────────────────
+# Note: rules module is optional and only imported when explicitly needed
+# This allows new validation system to work independently
 
 __all__ = [
     # Pipeline entry point
     "ValidationPipeline",       # import separately: from validation_pipeline import ...
-
-    # Rule registry helpers
-    "get_rule_for_type",
-    "get_registry",
 
     # Version info
     "__version__",

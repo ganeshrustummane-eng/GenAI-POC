@@ -1,21 +1,24 @@
 """
 AI Transformation Package
 ===========================
-Maps PostgreSQL columns to Snowflake columns and assigns the correct
-validation rule for each column pair.
+Maps source columns to Snowflake columns and assigns the correct validation
+rule for each column pair.
 
-Two mappers provided
---------------------
-  1. AIRuleMapper       — DIAL/GPT-4o (or any configured model).
-                          Best accuracy; requires DIAL_API_KEY env var.
-                          Model is user-selectable at runtime.
-  2. StaticRuleMapper   — Deterministic type-pair matching.
-                          No API key required; fully offline.
+AI-only mapping
+---------------
+  AIRuleMapper — DIAL/GPT-4o (or any configured model). Requires DIAL_API_KEY.
+                 The model is user-selectable at runtime.
+
+  The former StaticRuleMapper (deterministic type-pair matching, used as an
+  offline fallback) has been REMOVED. Its output was indistinguishable from a
+  reviewed AI mapping, so a missing API key silently downgraded correctness
+  without downgrading the reported confidence. Mapping now raises
+  AIRuleMappingError instead of guessing.
 
 RuleMapperOrchestrator
 ----------------------
-  Single entry point. Tries AI first, falls back to static automatically.
-  Supports runtime model switching via orchestrator.set_model('gpt-4o-mini').
+  Single entry point. Supports runtime model switching via
+  orchestrator.set_model('gpt-4o-mini').
 
 Available Models (DIAL)
 -----------------------
@@ -42,14 +45,19 @@ Usage
     )
 """
 
-from ai_transformation.static_rule_mapper import StaticRuleMapper, ColumnRuleMapping
-from ai_transformation.ai_rule_mapper import AIRuleMapper, AVAILABLE_MODELS, MODEL_DESCRIPTIONS
+from ai_transformation.column_mapping import ColumnRuleMapping
+from ai_transformation.ai_rule_mapper import (
+    AIRuleMapper,
+    AIRuleMappingError,
+    AVAILABLE_MODELS,
+    MODEL_DESCRIPTIONS,
+)
 from ai_transformation.orchestrator import RuleMapperOrchestrator
 
 __all__ = [
     "ColumnRuleMapping",
-    "StaticRuleMapper",
     "AIRuleMapper",
+    "AIRuleMappingError",
     "RuleMapperOrchestrator",
     "AVAILABLE_MODELS",
     "MODEL_DESCRIPTIONS",

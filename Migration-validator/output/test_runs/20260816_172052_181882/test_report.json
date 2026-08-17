@@ -1,0 +1,56 @@
+{
+  "run_id": "20260816_172052_181882",
+  "started_at": "20260816_172052_181882",
+  "repository": "C:\\EPAM-Personal\\Migration-validator",
+  "stages": [
+    {
+      "name": "Dependencies and imports",
+      "status": "PASS",
+      "details": {
+        "modules_checked": 11
+      },
+      "duration_seconds": 0.902
+    },
+    {
+      "name": "YAML configuration loading",
+      "status": "PASS",
+      "details": {
+        "yaml_files": 2,
+        "loaded": 2,
+        "validation_blocks": 0
+      },
+      "duration_seconds": 0.011
+    },
+    {
+      "name": "Generated SQL and dialect checks",
+      "status": "PASS",
+      "details": {
+        "mssql_guard": "PASS",
+        "value_dist": "PASS"
+      },
+      "duration_seconds": 0.0
+    },
+    {
+      "name": "Regression tests",
+      "status": "PASS",
+      "details": {
+        "command": "C:\\Python314\\python.exe -m pytest -q",
+        "output": "..........................................................               [100%]\n58 passed in 0.27s"
+      },
+      "duration_seconds": 0.758
+    },
+    {
+      "name": "Output artifacts",
+      "status": "PASS",
+      "details": {
+        "artifact_count": 26,
+        "latest": "C:\\EPAM-Personal\\Migration-validator\\output\\test_runs\\20260816_162254_701845\\test_report.json"
+      },
+      "duration_seconds": 0.004
+    }
+  ],
+  "summary": {
+    "passed": 5,
+    "errors": 0
+  }
+}

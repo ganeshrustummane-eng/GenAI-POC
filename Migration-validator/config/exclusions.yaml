@@ -1,0 +1,273 @@
+version: '1.0'
+last_updated: '2025-01-01T00:00:00'
+table_exclusions: []
+global_exclusions:
+  description: Columns excluded from ALL tables regardless of source/target database
+  columns:
+  - column_name: _FIVETRAN_DELETED
+    reason: Fivetran soft-delete flag — internal metadata, not source data
+    applies_to:
+    - source
+    - target
+  - column_name: _FIVETRAN_SYNCED
+    reason: Fivetran sync timestamp — internal metadata
+    applies_to:
+    - target
+  - column_name: _FIVETRAN_ID
+    reason: Fivetran internal row identifier — not present in source
+    applies_to:
+    - target
+  - column_name: _FIVETRAN_INDEX
+    reason: Fivetran array index for nested structures — internal metadata
+    applies_to:
+    - target
+  - column_name: LAST_MODIFIED_BY_FIVETRAN
+    reason: Fivetran audit column — not source data
+    applies_to:
+    - target
+  - column_name: FIVETRAN_SYNC_STATUS
+    reason: Fivetran sync status tracking — internal metadata
+    applies_to:
+    - target
+pattern_exclusions:
+  description: Exclude columns matching these regex patterns (case-insensitive)
+  patterns:
+  - pattern: ^_FIVETRAN_.*
+    reason: All Fivetran internal metadata columns
+    applies_to:
+    - source
+    - target
+  - pattern: ^_AIRBYTE_.*
+    reason: Airbyte metadata columns (alternative ETL tool)
+    applies_to:
+    - target
+  - pattern: ^_SDC_.*
+    reason: Stitch Data metadata columns (Singer/Stitch ETL)
+    applies_to:
+    - target
+  - pattern: ^SYSTEM_MODSTAMP$
+    reason: Salesforce system modification timestamp (not migrated)
+    applies_to:
+    - source
+type_based_exclusions:
+  description: Exclude columns based on problematic type combinations
+  rules:
+  - source_types:
+    - bytea
+    - binary
+    - varbinary
+    - blob
+    - image
+    target_types:
+    - BINARY
+    - VARBINARY
+    reason: Binary data requires hex encoding but is often large/unindexed — exclude
+      by default
+    enabled: false
+  - source_types:
+    - timestamp
+    - rowversion
+    source_database: mssql
+    target_types:
+    - BINARY
+    reason: MS SQL Server rowversion/timestamp is binary data, causes TRIM errors
+    enabled: true
+    notes: This is different from PostgreSQL TIMESTAMP. SQL Server timestamp is an
+      auto-incrementing binary counter.
+  - source_types:
+    - hstore
+    target_types:
+    - VARIANT
+    - OBJECT
+    reason: HStore requires special handling — may want to validate separately
+    enabled: false
+  - source_types:
+    - text
+    - jsonb
+    - json
+    size_threshold_mb: 10
+    reason: Very large text/JSON columns (>10MB avg) excluded for performance
+    enabled: false
+    notes: Enable if you have tables with multi-megabyte text fields
+table_specific_exclusions:
+  description: Exclude specific columns for specific tables
+  AcctSoftware:
+    source_database: mssql
+    target_database: snowflake
+    exclusions:
+    - column_name: uTS
+      reason: SQL Server rowversion (binary timestamp) — causes TRIM error
+      applies_to:
+      - source
+      - target
+      source_column_names:
+      - uTS
+      target_column_names:
+      - UTS
+    - column_name: sPasswordHash
+      reason: Security — password hash excluded from validation
+      applies_to:
+      - source
+      - target
+      notes: Sensitive data — do not compare in validation queries
+  Addresses:
+    source_database: mssql
+    target_database: snowflake
+    exclusions:
+    - column_name: uTS
+      reason: SQL Server rowversion (binary timestamp)
+      applies_to:
+      - source
+      - target
+      source_column_names:
+      - uTS
+      target_column_names:
+      - UTS
+    - column_name: GeographyData
+      reason: Geography/geometry type — requires special spatial comparison
+      applies_to:
+      - source
+      - target
+      notes: Spatial data types require PostGIS/Snowflake Geography functions
+  Users:
+    exclusions:
+    - column_name: password_hash
+      reason: Security — never validate password hashes
+      applies_to:
+      - source
+      - target
+    - column_name: ssn
+      reason: PII — Social Security Number excluded from logs
+      applies_to:
+      - source
+      - target
+      pii: true
+    - column_name: credit_card_number
+      reason: PCI compliance — credit card data excluded
+      applies_to:
+      - source
+      - target
+      pii: true
+      compliance: PCI-DSS
+  AuditLog:
+    exclusions:
+    - column_name: full_request_body
+      reason: Large JSON payloads — excluded for performance
+      applies_to:
+      - source
+      - target
+      performance: true
+      avg_size_mb: 5.2
+database_specific_exclusions:
+  description: Exclude columns based on source database type
+  mssql:
+  - column_name: timestamp
+    reason: SQL Server timestamp is rowversion (binary), not datetime
+    applies_to:
+    - source
+  - column_name: rowversion
+    reason: Binary auto-increment counter — not migrated
+    applies_to:
+    - source
+  - pattern: ^.*_rowversion$
+    reason: Common naming pattern for rowversion columns
+    applies_to:
+    - source
+  postgresql:
+  - column_name: xmin
+    reason: PostgreSQL internal transaction ID — not migrated
+    applies_to:
+    - source
+  - column_name: xmax
+    reason: PostgreSQL internal transaction ID — not migrated
+    applies_to:
+    - source
+  - column_name: ctid
+    reason: PostgreSQL tuple identifier — not migrated
+    applies_to:
+    - source
+  athena:
+  - pattern: ^\$path$
+    reason: Athena virtual column — S3 file path
+    applies_to:
+    - source
+  - pattern: ^\$file_.*
+    reason: Athena file metadata virtual columns
+    applies_to:
+    - source
+compliance_exclusions:
+  description: Exclude columns for compliance/security reasons (PII, PHI, PCI)
+  pii_columns:
+    enabled: true
+    description: Personally Identifiable Information — exclude from validation logs
+    patterns:
+    - (?i).*(ssn|social.?security).*
+    - (?i).*(passport|driver.?license).*
+    - (?i).*national.?id.*
+    - (?i).*(tax.?id|tin).*
+    reason: PII data — GDPR/CCPA compliance
+    applies_to:
+    - source
+    - target
+  phi_columns:
+    enabled: false
+    description: Protected Health Information — HIPAA compliance
+    patterns:
+    - (?i).*(medical.?record|mrn).*
+    - (?i).*(diagnosis|prescription).*
+    - (?i).*(health.?insurance|policy.?number).*
+    reason: PHI data — HIPAA compliance
+    applies_to:
+    - source
+    - target
+  pci_columns:
+    enabled: false
+    description: Payment Card Information — PCI-DSS compliance
+    patterns:
+    - (?i).*(card.?number|cc.?num|credit.?card).*
+    - (?i).*(cvv|cvc|card.?verification).*
+    - (?i).*(card.?holder|cardholder).*
+    reason: PCI data — PCI-DSS compliance
+    applies_to:
+    - source
+    - target
+performance_exclusions:
+  description: Exclude columns that impact validation performance
+  large_columns:
+    enabled: false
+    description: Exclude very large text/binary columns
+    size_threshold_mb: 10
+    reason: Columns >10MB average size — exclude for performance
+    applies_to:
+    - source
+    - target
+  unindexed_columns:
+    enabled: false
+    description: Exclude unindexed large text columns in tables >1M rows
+    row_threshold: 1000000
+    reason: Large table unindexed columns cause slow validation
+    applies_to:
+    - source
+    - target
+custom_exclusions:
+  description: Add your custom exclusion rules here
+  rules: []
+logging:
+  log_exclusions: true
+  log_level: INFO
+  show_excluded_columns: true
+  export_exclusion_report: true
+  report_path: output/exclusion_report.json
+settings:
+  fail_on_type_exclusion: false
+  warn_threshold_percent: 50
+  require_approval: false
+  allow_overrides: true
+user_global_exclusions:
+- column_name: uts
+  reason: Timestamp
+  applies_to:
+  - source
+  - target
+  added_by: CLI
+  date_added: '2026-08-17'

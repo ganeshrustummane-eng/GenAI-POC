@@ -1,0 +1,3 @@
+run_id,run_at,validation_performed,source_table_name,source_type,target_table_name,target_type,source_count,target_count,count_difference,status,batch_start_time,batch_end_time,total_time_taken
+20260815_151718_742211,15-Aug-2026 15:17:18.742224,count_validation,AcctSoftware,mssql,AcctSoftware,snowflake,19,17,2,FAIL,2026-08-15 15:17:18.746863,2026-08-15 15:17:22.507580,3.76s
+20260815_151718_742211,15-Aug-2026 15:17:18.742224,count_validation,Addresses,mssql,Addresses,snowflake,24,24,0,PASS,2026-08-15 15:17:22.514158,2026-08-15 15:17:25.560469,3.05s

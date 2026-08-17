@@ -50,8 +50,8 @@ from batch.config_parser import BatchConfig, TablePairConfig
 from batch.manifest_writer import ManifestWriter, TableResult
 
 
-# Batch run output root (src/runs/) — stores manifests and plan JSONs
-_OUTPUT_ROOT = Path(__file__).parent.parent / "runs"
+# Batch run output root (repository/output/) — stores manifests and plan JSONs
+_OUTPUT_ROOT = Path(__file__).resolve().parents[2] / "output" / "batch"
 
 
 class BatchRunner:
@@ -423,11 +423,16 @@ class BatchRunner:
             generated_by="ai" if (ai_calls_made > 0) else "fuzzy",
         )
 
-        # Save plan JSON
+        # Persist the contract. PlanStore owns the canonical location; the copy
+        # inside the run directory is a convenience snapshot for that run.
+        from core.plan_store import PlanStore
+
+        canonical_plan_path = PlanStore().save(plan)
         plan_path = table_dir / f"{pair.source_table.lower()}_plan.json"
         with open(plan_path, "w", encoding="utf-8") as f:
             import json as _json
             _json.dump(plan.to_dict(), f, indent=2, ensure_ascii=False)
+        print(f"    Canonical plan: {canonical_plan_path}")
 
         # Generate YAML into config/bronze/ (no SQL files)
         out_mgr = QueryOutputManager()
@@ -454,6 +459,7 @@ class BatchRunner:
                 sf_table=pair.target_table,
                 has_fivetran_active=has_fivetran,
                 active_mappings=rule_mappings,
+                source_db_type=src_cfg.db_type,
                 use_ai_recommendations=bool(dial_key),
                 generated_by=plan.generated_by,
                 model_used=plan.model_used,

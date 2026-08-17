@@ -1,0 +1,79 @@
+{
+  "run_id": "20260815_155135_171923",
+  "started_at": "20260815_155135_171923",
+  "repository": "C:\\EPAM-Personal\\Migration-validator",
+  "stages": [
+    {
+      "name": "Dependencies and imports",
+      "status": "PASS",
+      "details": {
+        "modules_checked": 11
+      },
+      "duration_seconds": 0.77
+    },
+    {
+      "name": "YAML configuration loading",
+      "status": "PASS",
+      "details": {
+        "yaml_files": 7,
+        "loaded": 7,
+        "validation_blocks": 12
+      },
+      "duration_seconds": 0.022
+    },
+    {
+      "name": "Generated SQL and dialect checks",
+      "status": "PASS",
+      "details": {
+        "mssql_guard": "PASS",
+        "value_dist": "PASS"
+      },
+      "duration_seconds": 0.001
+    },
+    {
+      "name": "Regression tests",
+      "status": "PASS",
+      "details": {
+        "command": "C:\\Users\\GaneshRustumMane\\AppData\\Roaming\\Python\\Python313\\Scripts\\pytest.EXE -q",
+        "output": "............                                                             [100%]\n============================== warnings summary ===============================\ntest_env_connections.py::test_postgresql\n  C:\\Users\\GaneshRustumMane\\AppData\\Roaming\\Python\\Python313\\site-packages\\_pytest\\python.py:171: PytestReturnNotNoneWarning: Test functions should return None, but test_env_connections.py::test_postgresql returned <class 'bool'>.\n  Did you mean to use `assert` instead of `return`?\n  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.\n    warnings.warn(\n\ntest_env_connections.py::test_mssql\n  C:\\Users\\GaneshRustumMane\\AppData\\Roaming\\Python\\Python313\\site-packages\\_pytest\\python.py:171: PytestReturnNotNoneWarning: Test functions should return None, but test_env_connections.py::test_mssql returned <class 'bool'>.\n  Did you mean to use `assert` instead of `return`?\n  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.\n    warnings.warn(\n\ntest_env_connections.py::test_snowflake\n  C:\\Users\\GaneshRustumMane\\AppData\\Roaming\\Python\\Python313\\site-packages\\_pytest\\python.py:171: PytestReturnNotNoneWarning: Test functions should return None, but test_env_connections.py::test_snowflake returned <class 'bool'>.\n  Did you mean to use `assert` instead of `return`?\n  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.\n    warnings.warn(\n\ntest_env_connections.py::test_athena\n  C:\\Users\\GaneshRustumMane\\AppData\\Roaming\\Python\\Python313\\site-packages\\_pytest\\python.py:171: PytestReturnNotNoneWarning: Test functions should return None, but test_env_connections.py::test_athena returned <class 'bool'>.\n  Did you mean to use `assert` instead of `return`?\n  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.\n    warnings.warn(\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n12 passed, 4 warnings in 0.06s"
+      },
+      "duration_seconds": 0.518
+    },
+    {
+      "name": "Live database connections",
+      "status": "PASS",
+      "details": {
+        "postgresql": true,
+        "mssql": true,
+        "snowflake": true,
+        "athena": true
+      },
+      "duration_seconds": 5.118
+    },
+    {
+      "name": "Live source-to-target validation",
+      "status": "PASS",
+      "details": {
+        "checks": 4,
+        "data_quality_findings": {
+          "count_validation_AcctSoftware": "FAIL",
+          "data_validation_AcctSoftware": "FAIL"
+        }
+      },
+      "duration_seconds": 13.544
+    },
+    {
+      "name": "Output artifacts",
+      "status": "PASS",
+      "details": {
+        "artifact_count": 23,
+        "latest": "C:\\EPAM-Personal\\Migration-validator\\output\\bronze\\validation_20260815_155141_602476\\validation_20260815_155141_602476.log"
+      },
+      "duration_seconds": 0.005
+    }
+  ],
+  "summary": {
+    "passed": 7,
+    "errors": 0
+  }
+}

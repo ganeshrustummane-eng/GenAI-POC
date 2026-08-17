@@ -1,10 +1,10 @@
 # ============================================================
 # Migration Validator — Dynamic Suite YAML Validation Config
 # Table      : Addresses
-# Generated  : 2026-08-13T19:52:01.823058
+# Generated  : 2026-08-17T11:53:04.268843
 # By         : AI (model: gpt-4o)
-# Checks     : 3 query pair(s)
-#              2 baseline, 1 conditional
+# Checks     : 4 query pair(s)
+#              2 baseline, 2 conditional
 #
 # This file contains schema-aware conditional checks in addition
 # to the baseline 8-query set — MIN/MAX, SUM (financial/quantity),
@@ -38,33 +38,32 @@ tables:
         source: mssql
         sourcequery: |
           SELECT
-              COALESCE(CAST(CAST(AddressID AS TEXT) AS TEXT), '<<NULL>>') AS AddressID_normalized,
-              COALESCE(CAST(CAST(SiteID AS TEXT) AS TEXT), '<<NULL>>') AS SiteID_normalized,
-              COALESCE(CAST(TRIM(sMrMrs) AS TEXT), '<<NULL>>') AS sMrMrs_normalized,
-              COALESCE(CAST(TRIM(sFName) AS TEXT), '<<NULL>>') AS sFName_normalized,
-              COALESCE(CAST(TRIM(sMI) AS TEXT), '<<NULL>>') AS sMI_normalized,
-              COALESCE(CAST(TRIM(sLName) AS TEXT), '<<NULL>>') AS sLName_normalized,
-              COALESCE(CAST(TRIM(sCompany) AS TEXT), '<<NULL>>') AS sCompany_normalized,
-              COALESCE(CAST(TRIM(sAddr1) AS TEXT), '<<NULL>>') AS sAddr1_normalized,
-              COALESCE(CAST(TRIM(sAddr2) AS TEXT), '<<NULL>>') AS sAddr2_normalized,
-              COALESCE(CAST(TRIM(sCity) AS TEXT), '<<NULL>>') AS sCity_normalized,
-              COALESCE(CAST(TRIM(sRegion) AS TEXT), '<<NULL>>') AS sRegion_normalized,
-              COALESCE(CAST(TRIM(sPostalCode) AS TEXT), '<<NULL>>') AS sPostalCode_normalized,
-              COALESCE(CAST(TRIM(sCountry) AS TEXT), '<<NULL>>') AS sCountry_normalized,
-              COALESCE(CAST(TRIM(sPhone1) AS TEXT), '<<NULL>>') AS sPhone1_normalized,
-              COALESCE(CAST(TRIM(sPhone2) AS TEXT), '<<NULL>>') AS sPhone2_normalized,
-              COALESCE(CAST(TRIM(sPhone3) AS TEXT), '<<NULL>>') AS sPhone3_normalized,
-              COALESCE(CAST(TRIM(sPhone4) AS TEXT), '<<NULL>>') AS sPhone4_normalized,
-              COALESCE(CAST(TRIM(sPhone5) AS TEXT), '<<NULL>>') AS sPhone5_normalized,
-              COALESCE(CAST(TRIM(sPhone6) AS TEXT), '<<NULL>>') AS sPhone6_normalized,
-              COALESCE(CAST(ROUND(CAST(dcLongitude AS NUMERIC), 2) AS TEXT), '<<NULL>>') AS dcLongitude_normalized,
-              COALESCE(CAST(ROUND(CAST(dcLatitude AS NUMERIC), 2) AS TEXT), '<<NULL>>') AS dcLatitude_normalized,
-              COALESCE(CAST(CASE WHEN bPermanent = true THEN '1' WHEN bPermanent = false THEN '0' ELSE NULL END AS TEXT), '<<NULL>>') AS bPermanent_normalized,
-              COALESCE(CAST(TO_CHAR(dDeleted, 'YYYY-MM-DD HH24:MI:SS') AS TEXT), '<<NULL>>') AS dDeleted_normalized,
-              COALESCE(CAST(TO_CHAR(dUpdated, 'YYYY-MM-DD HH24:MI:SS') AS TEXT), '<<NULL>>') AS dUpdated_normalized,
-              COALESCE(CAST(TO_CHAR(dArchived, 'YYYY-MM-DD HH24:MI:SS') AS TEXT), '<<NULL>>') AS dArchived_normalized,
-              COALESCE(CAST(TRIM(uTS) AS TEXT), '<<NULL>>') AS uTS_normalized,
-              COALESCE(CAST(CAST(OldPK AS TEXT) AS TEXT), '<<NULL>>') AS OldPK_normalized
+              COALESCE(CAST(CAST(AddressID AS VARCHAR(MAX)) AS VARCHAR(MAX)), '<<NULL>>') AS AddressID_normalized,
+              COALESCE(CAST(CAST(SiteID AS VARCHAR(MAX)) AS VARCHAR(MAX)), '<<NULL>>') AS SiteID_normalized,
+              COALESCE(CAST(LTRIM(RTRIM(sMrMrs)) AS VARCHAR(MAX)), '<<NULL>>') AS sMrMrs_normalized,
+              COALESCE(CAST(LTRIM(RTRIM(sFName)) AS VARCHAR(MAX)), '<<NULL>>') AS sFName_normalized,
+              COALESCE(CAST(LTRIM(RTRIM(sMI)) AS VARCHAR(MAX)), '<<NULL>>') AS sMI_normalized,
+              COALESCE(CAST(LTRIM(RTRIM(sLName)) AS VARCHAR(MAX)), '<<NULL>>') AS sLName_normalized,
+              COALESCE(CAST(LTRIM(RTRIM(sCompany)) AS VARCHAR(MAX)), '<<NULL>>') AS sCompany_normalized,
+              COALESCE(CAST(LTRIM(RTRIM(sAddr1)) AS VARCHAR(MAX)), '<<NULL>>') AS sAddr1_normalized,
+              COALESCE(CAST(LTRIM(RTRIM(sAddr2)) AS VARCHAR(MAX)), '<<NULL>>') AS sAddr2_normalized,
+              COALESCE(CAST(LTRIM(RTRIM(sCity)) AS VARCHAR(MAX)), '<<NULL>>') AS sCity_normalized,
+              COALESCE(CAST(LTRIM(RTRIM(sRegion)) AS VARCHAR(MAX)), '<<NULL>>') AS sRegion_normalized,
+              COALESCE(CAST(LTRIM(RTRIM(sPostalCode)) AS VARCHAR(MAX)), '<<NULL>>') AS sPostalCode_normalized,
+              COALESCE(CAST(LTRIM(RTRIM(sCountry)) AS VARCHAR(MAX)), '<<NULL>>') AS sCountry_normalized,
+              COALESCE(CAST(LTRIM(RTRIM(sPhone1)) AS VARCHAR(MAX)), '<<NULL>>') AS sPhone1_normalized,
+              COALESCE(CAST(LTRIM(RTRIM(sPhone2)) AS VARCHAR(MAX)), '<<NULL>>') AS sPhone2_normalized,
+              COALESCE(CAST(LTRIM(RTRIM(sPhone3)) AS VARCHAR(MAX)), '<<NULL>>') AS sPhone3_normalized,
+              COALESCE(CAST(LTRIM(RTRIM(sPhone4)) AS VARCHAR(MAX)), '<<NULL>>') AS sPhone4_normalized,
+              COALESCE(CAST(LTRIM(RTRIM(sPhone5)) AS VARCHAR(MAX)), '<<NULL>>') AS sPhone5_normalized,
+              COALESCE(CAST(LTRIM(RTRIM(sPhone6)) AS VARCHAR(MAX)), '<<NULL>>') AS sPhone6_normalized,
+              COALESCE(CAST(ROUND(CAST(dcLongitude AS DECIMAL(38, 2)), 2) AS VARCHAR(MAX)), '<<NULL>>') AS dcLongitude_normalized,
+              COALESCE(CAST(ROUND(CAST(dcLatitude AS DECIMAL(38, 2)), 2) AS VARCHAR(MAX)), '<<NULL>>') AS dcLatitude_normalized,
+              COALESCE(CAST(CASE WHEN bPermanent = 1 THEN '1' WHEN bPermanent = 0 THEN '0' ELSE NULL END AS VARCHAR(MAX)), '<<NULL>>') AS bPermanent_normalized,
+              COALESCE(CAST(FORMAT(dDeleted, 'yyyy-MM-dd HH:mm:ss') AS VARCHAR(MAX)), '<<NULL>>') AS dDeleted_normalized,
+              COALESCE(CAST(FORMAT(dUpdated, 'yyyy-MM-dd HH:mm:ss') AS VARCHAR(MAX)), '<<NULL>>') AS dUpdated_normalized,
+              COALESCE(CAST(FORMAT(dArchived, 'yyyy-MM-dd HH:mm:ss') AS VARCHAR(MAX)), '<<NULL>>') AS dArchived_normalized,
+              COALESCE(CAST(CAST(OldPK AS VARCHAR(MAX)) AS VARCHAR(MAX)), '<<NULL>>') AS OldPK_normalized
           FROM dbo.Addresses;
         target_table_name: ADDRESSES
         target: snowflake
@@ -95,164 +94,178 @@ tables:
               COALESCE(CAST(TO_VARCHAR(DDELETED, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>') AS dDeleted_normalized,
               COALESCE(CAST(TO_VARCHAR(DUPDATED, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>') AS dUpdated_normalized,
               COALESCE(CAST(TO_VARCHAR(DARCHIVED, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>') AS dArchived_normalized,
-              COALESCE(CAST(TRIM(UTS) AS STRING), '<<NULL>>') AS uTS_normalized,
               COALESCE(CAST(CAST(OLDPK AS STRING) AS STRING), '<<NULL>>') AS OldPK_normalized
           FROM DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.ADDRESSES WHERE _FIVETRAN_ACTIVE = TRUE;
         comparison_note: "Export both to CSV. Compare row-by-row — must be identical. All values are normalised so comparison is type-safe."
 
-      # ── ⑤–⑫ combined Combined Aggregate Query (NULL% + DISTINCT + MIN/MAX + VALUE_DIST) ─────────────────────
-      combined_aggregate_query_null%_distinct_min_max_value_dist:
+      # ── ⑤–⑫ combined Combined Aggregate Query (NULL% + DISTINCT + MIN/MAX) ─────────────────────
+      combined_aggregate_query_null%_distinct_min_max:
         source_table_name: Addresses
         source: mssql
         sourcequery: |
-          -- Includes: NULL% + DISTINCT + MIN/MAX + VALUE_DIST
-          -- One scan replaces 4 separate aggregate query types.
           SELECT
-              COUNT(*) AS total_rows
-              ROUND(100.0 * SUM(CASE WHEN AddressID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS AddressID_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SiteID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS SiteID_null_pct
-              ROUND(100.0 * SUM(CASE WHEN sMrMrs IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sMrMrs_null_pct
-              ROUND(100.0 * SUM(CASE WHEN sFName IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sFName_null_pct
-              ROUND(100.0 * SUM(CASE WHEN sMI IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sMI_null_pct
-              ROUND(100.0 * SUM(CASE WHEN sLName IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sLName_null_pct
-              ROUND(100.0 * SUM(CASE WHEN sCompany IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sCompany_null_pct
-              ROUND(100.0 * SUM(CASE WHEN sAddr1 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sAddr1_null_pct
-              ROUND(100.0 * SUM(CASE WHEN sAddr2 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sAddr2_null_pct
-              ROUND(100.0 * SUM(CASE WHEN sCity IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sCity_null_pct
-              ROUND(100.0 * SUM(CASE WHEN sRegion IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sRegion_null_pct
-              ROUND(100.0 * SUM(CASE WHEN sPostalCode IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPostalCode_null_pct
-              ROUND(100.0 * SUM(CASE WHEN sCountry IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sCountry_null_pct
-              ROUND(100.0 * SUM(CASE WHEN sPhone1 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone1_null_pct
-              ROUND(100.0 * SUM(CASE WHEN sPhone2 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone2_null_pct
-              ROUND(100.0 * SUM(CASE WHEN sPhone3 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone3_null_pct
-              ROUND(100.0 * SUM(CASE WHEN sPhone4 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone4_null_pct
-              ROUND(100.0 * SUM(CASE WHEN sPhone5 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone5_null_pct
-              ROUND(100.0 * SUM(CASE WHEN sPhone6 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone6_null_pct
-              ROUND(100.0 * SUM(CASE WHEN dcLongitude IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dcLongitude_null_pct
-              ROUND(100.0 * SUM(CASE WHEN dcLatitude IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dcLatitude_null_pct
-              ROUND(100.0 * SUM(CASE WHEN bPermanent IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS bPermanent_null_pct
-              ROUND(100.0 * SUM(CASE WHEN dDeleted IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dDeleted_null_pct
-              ROUND(100.0 * SUM(CASE WHEN dUpdated IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dUpdated_null_pct
-              ROUND(100.0 * SUM(CASE WHEN dArchived IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dArchived_null_pct
-              ROUND(100.0 * SUM(CASE WHEN uTS IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS uTS_null_pct
-              ROUND(100.0 * SUM(CASE WHEN OldPK IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS OldPK_null_pct
-              COUNT(DISTINCT AddressID) AS AddressID_distinct_count
-              COUNT(DISTINCT SiteID) AS SiteID_distinct_count
-              COUNT(DISTINCT sMrMrs) AS sMrMrs_distinct_count
-              COUNT(DISTINCT sFName) AS sFName_distinct_count
-              COUNT(DISTINCT sMI) AS sMI_distinct_count
-              COUNT(DISTINCT sLName) AS sLName_distinct_count
-              COUNT(DISTINCT sCompany) AS sCompany_distinct_count
-              COUNT(DISTINCT sAddr1) AS sAddr1_distinct_count
-              COUNT(DISTINCT sAddr2) AS sAddr2_distinct_count
-              COUNT(DISTINCT sCity) AS sCity_distinct_count
-              COUNT(DISTINCT sRegion) AS sRegion_distinct_count
-              COUNT(DISTINCT sPostalCode) AS sPostalCode_distinct_count
-              COUNT(DISTINCT sCountry) AS sCountry_distinct_count
-              COUNT(DISTINCT sPhone1) AS sPhone1_distinct_count
-              COUNT(DISTINCT sPhone2) AS sPhone2_distinct_count
-              COUNT(DISTINCT sPhone3) AS sPhone3_distinct_count
-              COUNT(DISTINCT sPhone4) AS sPhone4_distinct_count
-              COUNT(DISTINCT sPhone5) AS sPhone5_distinct_count
-              COUNT(DISTINCT sPhone6) AS sPhone6_distinct_count
-              COUNT(DISTINCT dcLongitude) AS dcLongitude_distinct_count
-              COUNT(DISTINCT dcLatitude) AS dcLatitude_distinct_count
-              COUNT(DISTINCT bPermanent) AS bPermanent_distinct_count
-              COUNT(DISTINCT dDeleted) AS dDeleted_distinct_count
-              COUNT(DISTINCT dUpdated) AS dUpdated_distinct_count
-              COUNT(DISTINCT dArchived) AS dArchived_distinct_count
-              COUNT(DISTINCT uTS) AS uTS_distinct_count
-              COUNT(DISTINCT OldPK) AS OldPK_distinct_count
-              MIN(AddressID) AS AddressID_min
-              MAX(AddressID) AS AddressID_max
-              MIN(SiteID) AS SiteID_min
-              MAX(SiteID) AS SiteID_max
-              MIN(dcLongitude) AS dcLongitude_min
-              MAX(dcLongitude) AS dcLongitude_max
-              MIN(dcLatitude) AS dcLatitude_min
-              MAX(dcLatitude) AS dcLatitude_max
-              MIN(OldPK) AS OldPK_min
+              COUNT(*) AS total_rows,
+              ROUND(100.0 * SUM(CASE WHEN AddressID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS AddressID_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SiteID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS SiteID_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN sMrMrs IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sMrMrs_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN sFName IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sFName_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN sMI IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sMI_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN sLName IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sLName_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN sCompany IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sCompany_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN sAddr1 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sAddr1_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN sAddr2 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sAddr2_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN sCity IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sCity_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN sRegion IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sRegion_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN sPostalCode IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPostalCode_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN sCountry IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sCountry_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN sPhone1 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone1_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN sPhone2 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone2_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN sPhone3 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone3_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN sPhone4 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone4_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN sPhone5 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone5_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN sPhone6 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone6_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN dcLongitude IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dcLongitude_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN dcLatitude IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dcLatitude_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN bPermanent IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS bPermanent_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN dDeleted IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dDeleted_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN dUpdated IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dUpdated_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN dArchived IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dArchived_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN OldPK IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS OldPK_null_pct,
+              COUNT(DISTINCT AddressID) AS AddressID_distinct_count,
+              COUNT(DISTINCT SiteID) AS SiteID_distinct_count,
+              COUNT(DISTINCT sMrMrs) AS sMrMrs_distinct_count,
+              COUNT(DISTINCT sFName) AS sFName_distinct_count,
+              COUNT(DISTINCT sMI) AS sMI_distinct_count,
+              COUNT(DISTINCT sLName) AS sLName_distinct_count,
+              COUNT(DISTINCT sCompany) AS sCompany_distinct_count,
+              COUNT(DISTINCT sAddr1) AS sAddr1_distinct_count,
+              COUNT(DISTINCT sAddr2) AS sAddr2_distinct_count,
+              COUNT(DISTINCT sCity) AS sCity_distinct_count,
+              COUNT(DISTINCT sRegion) AS sRegion_distinct_count,
+              COUNT(DISTINCT sPostalCode) AS sPostalCode_distinct_count,
+              COUNT(DISTINCT sCountry) AS sCountry_distinct_count,
+              COUNT(DISTINCT sPhone1) AS sPhone1_distinct_count,
+              COUNT(DISTINCT sPhone2) AS sPhone2_distinct_count,
+              COUNT(DISTINCT sPhone3) AS sPhone3_distinct_count,
+              COUNT(DISTINCT sPhone4) AS sPhone4_distinct_count,
+              COUNT(DISTINCT sPhone5) AS sPhone5_distinct_count,
+              COUNT(DISTINCT sPhone6) AS sPhone6_distinct_count,
+              COUNT(DISTINCT dcLongitude) AS dcLongitude_distinct_count,
+              COUNT(DISTINCT dcLatitude) AS dcLatitude_distinct_count,
+              COUNT(DISTINCT bPermanent) AS bPermanent_distinct_count,
+              COUNT(DISTINCT dDeleted) AS dDeleted_distinct_count,
+              COUNT(DISTINCT dUpdated) AS dUpdated_distinct_count,
+              COUNT(DISTINCT dArchived) AS dArchived_distinct_count,
+              COUNT(DISTINCT OldPK) AS OldPK_distinct_count,
+              MIN(AddressID) AS AddressID_min,
+              MAX(AddressID) AS AddressID_max,
+              MIN(SiteID) AS SiteID_min,
+              MAX(SiteID) AS SiteID_max,
+              MIN(dcLongitude) AS dcLongitude_min,
+              MAX(dcLongitude) AS dcLongitude_max,
+              MIN(dcLatitude) AS dcLatitude_min,
+              MAX(dcLatitude) AS dcLatitude_max,
+              MIN(OldPK) AS OldPK_min,
               MAX(OldPK) AS OldPK_max
           FROM dbo.Addresses;
         target_table_name: ADDRESSES
         target: snowflake
         targetquery: |
-          -- Includes: NULL% + DISTINCT + MIN/MAX + VALUE_DIST
           SELECT
-              COUNT(*) AS total_rows
-              ROUND(100.0 * SUM(CASE WHEN ADDRESSID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS AddressID_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SITEID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS SiteID_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SMRMRS IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sMrMrs_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SFNAME IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sFName_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SMI IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sMI_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SLNAME IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sLName_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SCOMPANY IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sCompany_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SADDR1 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sAddr1_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SADDR2 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sAddr2_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SCITY IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sCity_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SREGION IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sRegion_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SPOSTALCODE IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPostalCode_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SCOUNTRY IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sCountry_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SPHONE1 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone1_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SPHONE2 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone2_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SPHONE3 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone3_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SPHONE4 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone4_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SPHONE5 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone5_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SPHONE6 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone6_null_pct
-              ROUND(100.0 * SUM(CASE WHEN DCLONGITUDE IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dcLongitude_null_pct
-              ROUND(100.0 * SUM(CASE WHEN DCLATITUDE IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dcLatitude_null_pct
-              ROUND(100.0 * SUM(CASE WHEN BPERMANENT IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS bPermanent_null_pct
-              ROUND(100.0 * SUM(CASE WHEN DDELETED IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dDeleted_null_pct
-              ROUND(100.0 * SUM(CASE WHEN DUPDATED IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dUpdated_null_pct
-              ROUND(100.0 * SUM(CASE WHEN DARCHIVED IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dArchived_null_pct
-              ROUND(100.0 * SUM(CASE WHEN UTS IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS uTS_null_pct
-              ROUND(100.0 * SUM(CASE WHEN OLDPK IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS OldPK_null_pct
-              COUNT(DISTINCT ADDRESSID) AS AddressID_distinct_count
-              COUNT(DISTINCT SITEID) AS SiteID_distinct_count
-              COUNT(DISTINCT SMRMRS) AS sMrMrs_distinct_count
-              COUNT(DISTINCT SFNAME) AS sFName_distinct_count
-              COUNT(DISTINCT SMI) AS sMI_distinct_count
-              COUNT(DISTINCT SLNAME) AS sLName_distinct_count
-              COUNT(DISTINCT SCOMPANY) AS sCompany_distinct_count
-              COUNT(DISTINCT SADDR1) AS sAddr1_distinct_count
-              COUNT(DISTINCT SADDR2) AS sAddr2_distinct_count
-              COUNT(DISTINCT SCITY) AS sCity_distinct_count
-              COUNT(DISTINCT SREGION) AS sRegion_distinct_count
-              COUNT(DISTINCT SPOSTALCODE) AS sPostalCode_distinct_count
-              COUNT(DISTINCT SCOUNTRY) AS sCountry_distinct_count
-              COUNT(DISTINCT SPHONE1) AS sPhone1_distinct_count
-              COUNT(DISTINCT SPHONE2) AS sPhone2_distinct_count
-              COUNT(DISTINCT SPHONE3) AS sPhone3_distinct_count
-              COUNT(DISTINCT SPHONE4) AS sPhone4_distinct_count
-              COUNT(DISTINCT SPHONE5) AS sPhone5_distinct_count
-              COUNT(DISTINCT SPHONE6) AS sPhone6_distinct_count
-              COUNT(DISTINCT DCLONGITUDE) AS dcLongitude_distinct_count
-              COUNT(DISTINCT DCLATITUDE) AS dcLatitude_distinct_count
-              COUNT(DISTINCT BPERMANENT) AS bPermanent_distinct_count
-              COUNT(DISTINCT DDELETED) AS dDeleted_distinct_count
-              COUNT(DISTINCT DUPDATED) AS dUpdated_distinct_count
-              COUNT(DISTINCT DARCHIVED) AS dArchived_distinct_count
-              COUNT(DISTINCT UTS) AS uTS_distinct_count
-              COUNT(DISTINCT OLDPK) AS OldPK_distinct_count
-              MIN(ADDRESSID) AS AddressID_min
-              MAX(ADDRESSID) AS AddressID_max
-              MIN(SITEID) AS SiteID_min
-              MAX(SITEID) AS SiteID_max
-              MIN(DCLONGITUDE) AS dcLongitude_min
-              MAX(DCLONGITUDE) AS dcLongitude_max
-              MIN(DCLATITUDE) AS dcLatitude_min
-              MAX(DCLATITUDE) AS dcLatitude_max
-              MIN(OLDPK) AS OldPK_min
+              COUNT(*) AS total_rows,
+              ROUND(100.0 * SUM(CASE WHEN ADDRESSID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS AddressID_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SITEID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS SiteID_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SMRMRS IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sMrMrs_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SFNAME IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sFName_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SMI IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sMI_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SLNAME IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sLName_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SCOMPANY IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sCompany_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SADDR1 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sAddr1_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SADDR2 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sAddr2_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SCITY IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sCity_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SREGION IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sRegion_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SPOSTALCODE IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPostalCode_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SCOUNTRY IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sCountry_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SPHONE1 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone1_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SPHONE2 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone2_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SPHONE3 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone3_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SPHONE4 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone4_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SPHONE5 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone5_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SPHONE6 IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sPhone6_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN DCLONGITUDE IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dcLongitude_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN DCLATITUDE IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dcLatitude_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN BPERMANENT IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS bPermanent_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN DDELETED IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dDeleted_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN DUPDATED IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dUpdated_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN DARCHIVED IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dArchived_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN OLDPK IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS OldPK_null_pct,
+              COUNT(DISTINCT ADDRESSID) AS AddressID_distinct_count,
+              COUNT(DISTINCT SITEID) AS SiteID_distinct_count,
+              COUNT(DISTINCT SMRMRS) AS sMrMrs_distinct_count,
+              COUNT(DISTINCT SFNAME) AS sFName_distinct_count,
+              COUNT(DISTINCT SMI) AS sMI_distinct_count,
+              COUNT(DISTINCT SLNAME) AS sLName_distinct_count,
+              COUNT(DISTINCT SCOMPANY) AS sCompany_distinct_count,
+              COUNT(DISTINCT SADDR1) AS sAddr1_distinct_count,
+              COUNT(DISTINCT SADDR2) AS sAddr2_distinct_count,
+              COUNT(DISTINCT SCITY) AS sCity_distinct_count,
+              COUNT(DISTINCT SREGION) AS sRegion_distinct_count,
+              COUNT(DISTINCT SPOSTALCODE) AS sPostalCode_distinct_count,
+              COUNT(DISTINCT SCOUNTRY) AS sCountry_distinct_count,
+              COUNT(DISTINCT SPHONE1) AS sPhone1_distinct_count,
+              COUNT(DISTINCT SPHONE2) AS sPhone2_distinct_count,
+              COUNT(DISTINCT SPHONE3) AS sPhone3_distinct_count,
+              COUNT(DISTINCT SPHONE4) AS sPhone4_distinct_count,
+              COUNT(DISTINCT SPHONE5) AS sPhone5_distinct_count,
+              COUNT(DISTINCT SPHONE6) AS sPhone6_distinct_count,
+              COUNT(DISTINCT DCLONGITUDE) AS dcLongitude_distinct_count,
+              COUNT(DISTINCT DCLATITUDE) AS dcLatitude_distinct_count,
+              COUNT(DISTINCT BPERMANENT) AS bPermanent_distinct_count,
+              COUNT(DISTINCT DDELETED) AS dDeleted_distinct_count,
+              COUNT(DISTINCT DUPDATED) AS dUpdated_distinct_count,
+              COUNT(DISTINCT DARCHIVED) AS dArchived_distinct_count,
+              COUNT(DISTINCT OLDPK) AS OldPK_distinct_count,
+              MIN(ADDRESSID) AS AddressID_min,
+              MAX(ADDRESSID) AS AddressID_max,
+              MIN(SITEID) AS SiteID_min,
+              MAX(SITEID) AS SiteID_max,
+              MIN(DCLONGITUDE) AS dcLongitude_min,
+              MAX(DCLONGITUDE) AS dcLongitude_max,
+              MIN(DCLATITUDE) AS dcLatitude_min,
+              MAX(DCLATITUDE) AS dcLatitude_max,
+              MIN(OLDPK) AS OldPK_min,
               MAX(OLDPK) AS OldPK_max
           FROM DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.ADDRESSES WHERE _FIVETRAN_ACTIVE = TRUE;
         comparison_note: "Compare each _null_pct, _distinct_count, _min, _max, _sum column between source and target. Column names are identical so direct comparison is possible."
+
+      # ── VALUE_DIST Value Distribution (bPermanent) ─────────────────────
+      value_distribution_bpermanent:
+        source_table_name: Addresses
+        source: mssql
+        sourcequery: |
+          SELECT
+              COALESCE(CAST(bPermanent AS VARCHAR(MAX)), '<<NULL>>') AS value,
+              COUNT(*) AS value_count
+          FROM dbo.Addresses
+          GROUP BY COALESCE(CAST(bPermanent AS VARCHAR(MAX)), '<<NULL>>')
+          ORDER BY value_count DESC;
+        target_table_name: ADDRESSES
+        target: snowflake
+        targetquery: |
+          SELECT
+              COALESCE(CAST(BPERMANENT AS STRING), '<<NULL>>') AS value,
+              COUNT(*) AS value_count
+          FROM DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.ADDRESSES WHERE _FIVETRAN_ACTIVE = TRUE
+          GROUP BY COALESCE(CAST(BPERMANENT AS STRING), '<<NULL>>')
+          ORDER BY value_count DESC;
+        comparison_note: "Compare value_count by value; NULL is represented explicitly."
 
       # ── AI-recommended business-rule checks ──────────────
       # Run as: SELECT COUNT(*) FROM <table> WHERE NOT (<cond>)
       # Any count > 0 = data quality issue.
       # These are not executable blocks — review and adapt manually.
-      # [Longitude_Latitude_Range_Check] Ensure longitude and latitude values fall within valid geographic ranges.: (dcLongitude IS NOT NULL AND (dcLongitude < -180 OR dcLongitude > 180)) OR (dcLatitude IS NOT NULL AND (dcLatitude < -90 OR dcLatitude > 90))
-      # [Phone_Length_Check] Validate that phone numbers do not exceed a reasonable length.: (LENGTH(sPhone1) > 15 OR LENGTH(sPhone2) > 15 OR LENGTH(sPhone3) > 15 OR LENGTH(sPhone4) > 15 OR LENGTH(sPhone5) > 15 OR LENGTH(sPhone6) > 15)
-      # [Timestamp_Order_Check] Ensure that deleted, updated, and archived timestamps follow logical ordering.: (dDeleted IS NOT NULL AND dUpdated IS NOT NULL AND dDeleted < dUpdated) OR (dArchived IS NOT NULL AND dUpdated IS NOT NULL AND dArchived < dUpdated)
-      # [PostalCode_Format_Check] Validate that postal codes contain only alphanumeric characters.: (sPostalCode IS NOT NULL AND sPostalCode !~ '^[a-zA-Z0-9]*$')
-      # [Permanent_Flag_Consistency_Check] Ensure that permanent addresses are not marked as deleted.: (bPermanent = TRUE AND dDeleted IS NOT NULL)
+      # [longitude_latitude_range] Validate that longitude and latitude values fall within plausible geographic ranges.: (dcLongitude IS NOT NULL AND (dcLongitude < -180 OR dcLongitude > 180)) OR (dcLatitude IS NOT NULL AND (dcLatitude < -90 OR dcLatitude > 90))
+      # [postal_code_length] Ensure postal codes are within a reasonable length range.: sPostalCode IS NOT NULL AND LENGTH(sPostalCode) > 20
+      # [phone_number_length] Validate that phone numbers are within a plausible length range.: (sPhone1 IS NOT NULL AND LENGTH(sPhone1) > 15) OR (sPhone2 IS NOT NULL AND LENGTH(sPhone2) > 15) OR (sPhone3 IS NOT NULL AND LENGTH(sPhone3) > 15) OR (sPhone4 IS NOT NULL AND LENGTH(sPhone4) > 15) OR (sPhone5 IS NOT NULL AND LENGTH(sPhone5) > 15) OR (sPhone6 IS NOT NULL AND LENGTH(sPhone6) > 15)
+      # [deleted_before_updated] Ensure that the deletion timestamp does not precede the update timestamp.: dDeleted IS NOT NULL AND dUpdated IS NOT NULL AND dDeleted < dUpdated
+      # [archived_after_updated] Ensure that the archival timestamp does not precede the update timestamp.: dArchived IS NOT NULL AND dUpdated IS NOT NULL AND dArchived < dUpdated

@@ -1,0 +1,53 @@
+{
+  "run_id": "20260815_154757_526182",
+  "started_at": "20260815_154757_526182",
+  "repository": "C:\\EPAM-Personal\\Migration-validator",
+  "stages": [
+    {
+      "name": "Dependencies and imports",
+      "status": "PASS",
+      "details": {
+        "modules_checked": 11
+      },
+      "duration_seconds": 0.837
+    },
+    {
+      "name": "YAML configuration loading",
+      "status": "PASS",
+      "details": {
+        "yaml_files": 7,
+        "loaded": 7,
+        "validation_blocks": 12
+      },
+      "duration_seconds": 0.021
+    },
+    {
+      "name": "Generated SQL and dialect checks",
+      "status": "ERROR",
+      "error": "VALUE_DIST did not produce a query",
+      "duration_seconds": 0.004
+    },
+    {
+      "name": "Regression tests",
+      "status": "PASS",
+      "details": {
+        "command": "C:\\Users\\GaneshRustumMane\\AppData\\Roaming\\Python\\Python313\\Scripts\\pytest.EXE -q",
+        "output": "............                                                             [100%]\n============================== warnings summary ===============================\ntest_env_connections.py::test_postgresql\n  C:\\Users\\GaneshRustumMane\\AppData\\Roaming\\Python\\Python313\\site-packages\\_pytest\\python.py:171: PytestReturnNotNoneWarning: Test functions should return None, but test_env_connections.py::test_postgresql returned <class 'bool'>.\n  Did you mean to use `assert` instead of `return`?\n  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.\n    warnings.warn(\n\ntest_env_connections.py::test_mssql\n  C:\\Users\\GaneshRustumMane\\AppData\\Roaming\\Python\\Python313\\site-packages\\_pytest\\python.py:171: PytestReturnNotNoneWarning: Test functions should return None, but test_env_connections.py::test_mssql returned <class 'bool'>.\n  Did you mean to use `assert` instead of `return`?\n  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.\n    warnings.warn(\n\ntest_env_connections.py::test_snowflake\n  C:\\Users\\GaneshRustumMane\\AppData\\Roaming\\Python\\Python313\\site-packages\\_pytest\\python.py:171: PytestReturnNotNoneWarning: Test functions should return None, but test_env_connections.py::test_snowflake returned <class 'bool'>.\n  Did you mean to use `assert` instead of `return`?\n  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.\n    warnings.warn(\n\ntest_env_connections.py::test_athena\n  C:\\Users\\GaneshRustumMane\\AppData\\Roaming\\Python\\Python313\\site-packages\\_pytest\\python.py:171: PytestReturnNotNoneWarning: Test functions should return None, but test_env_connections.py::test_athena returned <class 'bool'>.\n  Did you mean to use `assert` instead of `return`?\n  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.\n    warnings.warn(\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n12 passed, 4 warnings in 0.06s"
+      },
+      "duration_seconds": 4.136
+    },
+    {
+      "name": "Output artifacts",
+      "status": "PASS",
+      "details": {
+        "artifact_count": 12,
+        "latest": "C:\\EPAM-Personal\\Migration-validator\\output\\test_runs\\20260815_154655_209677\\test_report.json"
+      },
+      "duration_seconds": 0.002
+    }
+  ],
+  "summary": {
+    "passed": 4,
+    "errors": 1
+  }
+}

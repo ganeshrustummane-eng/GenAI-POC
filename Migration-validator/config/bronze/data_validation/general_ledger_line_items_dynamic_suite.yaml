@@ -1,10 +1,10 @@
 # ============================================================
 # Migration Validator — Dynamic Suite YAML Validation Config
 # Table      : general_ledger_line_items
-# Generated  : 2026-08-13T19:46:20.112956
-# By         : AI (model: gpt-4o)
-# Checks     : 4 query pair(s)
-#              2 baseline, 2 conditional
+# Generated  : 2026-08-17T13:49:12.431467
+# By         : AI (model: claude-sonnet-4-5)
+# Checks     : 8 query pair(s)
+#              2 baseline, 6 conditional
 #
 # This file contains schema-aware conditional checks in addition
 # to the baseline 8-query set — MIN/MAX, SUM (financial/quantity),
@@ -84,113 +84,197 @@ tables:
           FROM DEV_EDGE_BRONZE.STOREDGE_FMS_PUBLIC.GENERAL_LEDGER_LINE_ITEMS WHERE _FIVETRAN_ACTIVE = TRUE;
         comparison_note: "Export both to CSV. Compare row-by-row — must be identical. All values are normalised so comparison is type-safe."
 
-      # ── ⑤–⑫ combined Combined Aggregate Query (NULL% + DISTINCT + MIN/MAX + SUM + VALUE_DIST) ─────────────────────
-      combined_aggregate_query_null%_distinct_min_max_sum_value_dist:
+      # ── ⑤–⑫ combined Combined Aggregate Query (NULL% + DISTINCT + MIN/MAX + SUM) ─────────────────────
+      combined_aggregate_query_null%_distinct_min_max_sum:
         source_table_name: general_ledger_line_items
         source: postgresql
         sourcequery: |
-          -- Includes: NULL% + DISTINCT + MIN/MAX + SUM + VALUE_DIST
-          -- One scan replaces 5 separate aggregate query types.
           SELECT
-              COUNT(*) AS total_rows
-              ROUND(100.0 * SUM(CASE WHEN effective_on IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS effective_on_null_pct
-              ROUND(100.0 * SUM(CASE WHEN description IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS description_null_pct
-              ROUND(100.0 * SUM(CASE WHEN amount IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS amount_null_pct
-              ROUND(100.0 * SUM(CASE WHEN account_balance_id IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS account_balance_id_null_pct
-              ROUND(100.0 * SUM(CASE WHEN tenant_id IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS tenant_id_null_pct
-              ROUND(100.0 * SUM(CASE WHEN ledger_id IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS ledger_id_null_pct
-              ROUND(100.0 * SUM(CASE WHEN facility_id IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS facility_id_null_pct
-              ROUND(100.0 * SUM(CASE WHEN created_at IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS created_at_null_pct
-              ROUND(100.0 * SUM(CASE WHEN updated_at IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS updated_at_null_pct
-              ROUND(100.0 * SUM(CASE WHEN uuid IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS uuid_null_pct
-              ROUND(100.0 * SUM(CASE WHEN reversal IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS reversal_null_pct
-              ROUND(100.0 * SUM(CASE WHEN account_balance_item_id IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS account_balance_item_id_null_pct
-              ROUND(100.0 * SUM(CASE WHEN internal_account_code IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS internal_account_code_null_pct
-              ROUND(100.0 * SUM(CASE WHEN daily_transaction IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS daily_transaction_null_pct
-              ROUND(100.0 * SUM(CASE WHEN transaction_type IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS transaction_type_null_pct
-              ROUND(100.0 * SUM(CASE WHEN hidden IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS hidden_null_pct
-              ROUND(100.0 * SUM(CASE WHEN reference_number IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS reference_number_null_pct
-              ROUND(100.0 * SUM(CASE WHEN display_code IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS display_code_null_pct
-              ROUND(100.0 * SUM(CASE WHEN id IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS id_null_pct
-              COUNT(DISTINCT effective_on) AS effective_on_distinct_count
-              COUNT(DISTINCT description) AS description_distinct_count
-              COUNT(DISTINCT amount) AS amount_distinct_count
-              COUNT(DISTINCT account_balance_id) AS account_balance_id_distinct_count
-              COUNT(DISTINCT tenant_id) AS tenant_id_distinct_count
-              COUNT(DISTINCT ledger_id) AS ledger_id_distinct_count
-              COUNT(DISTINCT facility_id) AS facility_id_distinct_count
-              COUNT(DISTINCT created_at) AS created_at_distinct_count
-              COUNT(DISTINCT updated_at) AS updated_at_distinct_count
-              COUNT(DISTINCT uuid) AS uuid_distinct_count
-              COUNT(DISTINCT reversal) AS reversal_distinct_count
-              COUNT(DISTINCT account_balance_item_id) AS account_balance_item_id_distinct_count
-              COUNT(DISTINCT internal_account_code) AS internal_account_code_distinct_count
-              COUNT(DISTINCT daily_transaction) AS daily_transaction_distinct_count
-              COUNT(DISTINCT transaction_type) AS transaction_type_distinct_count
-              COUNT(DISTINCT hidden) AS hidden_distinct_count
-              COUNT(DISTINCT reference_number) AS reference_number_distinct_count
-              COUNT(DISTINCT display_code) AS display_code_distinct_count
-              COUNT(DISTINCT id) AS id_distinct_count
-              MIN(amount) AS amount_min
-              MAX(amount) AS amount_max
+              COUNT(*) AS total_rows,
+              ROUND(100.0 * SUM(CASE WHEN effective_on IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS effective_on_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN description IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS description_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN amount IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS amount_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN account_balance_id IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS account_balance_id_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN tenant_id IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS tenant_id_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN ledger_id IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS ledger_id_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN facility_id IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS facility_id_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN created_at IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS created_at_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN updated_at IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS updated_at_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN uuid IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS uuid_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN reversal IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS reversal_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN account_balance_item_id IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS account_balance_item_id_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN internal_account_code IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS internal_account_code_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN daily_transaction IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS daily_transaction_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN transaction_type IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS transaction_type_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN hidden IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS hidden_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN reference_number IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS reference_number_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN display_code IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS display_code_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN id IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS id_null_pct,
+              COUNT(DISTINCT effective_on) AS effective_on_distinct_count,
+              COUNT(DISTINCT description) AS description_distinct_count,
+              COUNT(DISTINCT amount) AS amount_distinct_count,
+              COUNT(DISTINCT account_balance_id) AS account_balance_id_distinct_count,
+              COUNT(DISTINCT tenant_id) AS tenant_id_distinct_count,
+              COUNT(DISTINCT ledger_id) AS ledger_id_distinct_count,
+              COUNT(DISTINCT facility_id) AS facility_id_distinct_count,
+              COUNT(DISTINCT created_at) AS created_at_distinct_count,
+              COUNT(DISTINCT updated_at) AS updated_at_distinct_count,
+              COUNT(DISTINCT uuid) AS uuid_distinct_count,
+              COUNT(DISTINCT reversal) AS reversal_distinct_count,
+              COUNT(DISTINCT account_balance_item_id) AS account_balance_item_id_distinct_count,
+              COUNT(DISTINCT internal_account_code) AS internal_account_code_distinct_count,
+              COUNT(DISTINCT daily_transaction) AS daily_transaction_distinct_count,
+              COUNT(DISTINCT transaction_type) AS transaction_type_distinct_count,
+              COUNT(DISTINCT hidden) AS hidden_distinct_count,
+              COUNT(DISTINCT reference_number) AS reference_number_distinct_count,
+              COUNT(DISTINCT display_code) AS display_code_distinct_count,
+              COUNT(DISTINCT id) AS id_distinct_count,
+              MIN(amount) AS amount_min,
+              MAX(amount) AS amount_max,
               SUM(amount) AS amount_sum
           FROM public.general_ledger_line_items;
         target_table_name: GENERAL_LEDGER_LINE_ITEMS
         target: snowflake
         targetquery: |
-          -- Includes: NULL% + DISTINCT + MIN/MAX + SUM + VALUE_DIST
           SELECT
-              COUNT(*) AS total_rows
-              ROUND(100.0 * SUM(CASE WHEN EFFECTIVE_ON IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS effective_on_null_pct
-              ROUND(100.0 * SUM(CASE WHEN DESCRIPTION IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS description_null_pct
-              ROUND(100.0 * SUM(CASE WHEN AMOUNT IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS amount_null_pct
-              ROUND(100.0 * SUM(CASE WHEN ACCOUNT_BALANCE_ID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS account_balance_id_null_pct
-              ROUND(100.0 * SUM(CASE WHEN TENANT_ID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS tenant_id_null_pct
-              ROUND(100.0 * SUM(CASE WHEN LEDGER_ID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS ledger_id_null_pct
-              ROUND(100.0 * SUM(CASE WHEN FACILITY_ID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS facility_id_null_pct
-              ROUND(100.0 * SUM(CASE WHEN CREATED_AT IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS created_at_null_pct
-              ROUND(100.0 * SUM(CASE WHEN UPDATED_AT IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS updated_at_null_pct
-              ROUND(100.0 * SUM(CASE WHEN UUID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS uuid_null_pct
-              ROUND(100.0 * SUM(CASE WHEN REVERSAL IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS reversal_null_pct
-              ROUND(100.0 * SUM(CASE WHEN ACCOUNT_BALANCE_ITEM_ID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS account_balance_item_id_null_pct
-              ROUND(100.0 * SUM(CASE WHEN INTERNAL_ACCOUNT_CODE IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS internal_account_code_null_pct
-              ROUND(100.0 * SUM(CASE WHEN DAILY_TRANSACTION IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS daily_transaction_null_pct
-              ROUND(100.0 * SUM(CASE WHEN TRANSACTION_TYPE IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS transaction_type_null_pct
-              ROUND(100.0 * SUM(CASE WHEN HIDDEN IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS hidden_null_pct
-              ROUND(100.0 * SUM(CASE WHEN REFERENCE_NUMBER IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS reference_number_null_pct
-              ROUND(100.0 * SUM(CASE WHEN DISPLAY_CODE IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS display_code_null_pct
-              ROUND(100.0 * SUM(CASE WHEN ID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS id_null_pct
-              COUNT(DISTINCT EFFECTIVE_ON) AS effective_on_distinct_count
-              COUNT(DISTINCT DESCRIPTION) AS description_distinct_count
-              COUNT(DISTINCT AMOUNT) AS amount_distinct_count
-              COUNT(DISTINCT ACCOUNT_BALANCE_ID) AS account_balance_id_distinct_count
-              COUNT(DISTINCT TENANT_ID) AS tenant_id_distinct_count
-              COUNT(DISTINCT LEDGER_ID) AS ledger_id_distinct_count
-              COUNT(DISTINCT FACILITY_ID) AS facility_id_distinct_count
-              COUNT(DISTINCT CREATED_AT) AS created_at_distinct_count
-              COUNT(DISTINCT UPDATED_AT) AS updated_at_distinct_count
-              COUNT(DISTINCT UUID) AS uuid_distinct_count
-              COUNT(DISTINCT REVERSAL) AS reversal_distinct_count
-              COUNT(DISTINCT ACCOUNT_BALANCE_ITEM_ID) AS account_balance_item_id_distinct_count
-              COUNT(DISTINCT INTERNAL_ACCOUNT_CODE) AS internal_account_code_distinct_count
-              COUNT(DISTINCT DAILY_TRANSACTION) AS daily_transaction_distinct_count
-              COUNT(DISTINCT TRANSACTION_TYPE) AS transaction_type_distinct_count
-              COUNT(DISTINCT HIDDEN) AS hidden_distinct_count
-              COUNT(DISTINCT REFERENCE_NUMBER) AS reference_number_distinct_count
-              COUNT(DISTINCT DISPLAY_CODE) AS display_code_distinct_count
-              COUNT(DISTINCT ID) AS id_distinct_count
-              MIN(AMOUNT) AS amount_min
-              MAX(AMOUNT) AS amount_max
+              COUNT(*) AS total_rows,
+              ROUND(100.0 * SUM(CASE WHEN EFFECTIVE_ON IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS effective_on_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN DESCRIPTION IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS description_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN AMOUNT IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS amount_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN ACCOUNT_BALANCE_ID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS account_balance_id_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN TENANT_ID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS tenant_id_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN LEDGER_ID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS ledger_id_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN FACILITY_ID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS facility_id_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN CREATED_AT IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS created_at_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN UPDATED_AT IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS updated_at_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN UUID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS uuid_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN REVERSAL IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS reversal_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN ACCOUNT_BALANCE_ITEM_ID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS account_balance_item_id_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN INTERNAL_ACCOUNT_CODE IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS internal_account_code_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN DAILY_TRANSACTION IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS daily_transaction_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN TRANSACTION_TYPE IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS transaction_type_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN HIDDEN IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS hidden_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN REFERENCE_NUMBER IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS reference_number_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN DISPLAY_CODE IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS display_code_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN ID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS id_null_pct,
+              COUNT(DISTINCT EFFECTIVE_ON) AS effective_on_distinct_count,
+              COUNT(DISTINCT DESCRIPTION) AS description_distinct_count,
+              COUNT(DISTINCT AMOUNT) AS amount_distinct_count,
+              COUNT(DISTINCT ACCOUNT_BALANCE_ID) AS account_balance_id_distinct_count,
+              COUNT(DISTINCT TENANT_ID) AS tenant_id_distinct_count,
+              COUNT(DISTINCT LEDGER_ID) AS ledger_id_distinct_count,
+              COUNT(DISTINCT FACILITY_ID) AS facility_id_distinct_count,
+              COUNT(DISTINCT CREATED_AT) AS created_at_distinct_count,
+              COUNT(DISTINCT UPDATED_AT) AS updated_at_distinct_count,
+              COUNT(DISTINCT UUID) AS uuid_distinct_count,
+              COUNT(DISTINCT REVERSAL) AS reversal_distinct_count,
+              COUNT(DISTINCT ACCOUNT_BALANCE_ITEM_ID) AS account_balance_item_id_distinct_count,
+              COUNT(DISTINCT INTERNAL_ACCOUNT_CODE) AS internal_account_code_distinct_count,
+              COUNT(DISTINCT DAILY_TRANSACTION) AS daily_transaction_distinct_count,
+              COUNT(DISTINCT TRANSACTION_TYPE) AS transaction_type_distinct_count,
+              COUNT(DISTINCT HIDDEN) AS hidden_distinct_count,
+              COUNT(DISTINCT REFERENCE_NUMBER) AS reference_number_distinct_count,
+              COUNT(DISTINCT DISPLAY_CODE) AS display_code_distinct_count,
+              COUNT(DISTINCT ID) AS id_distinct_count,
+              MIN(AMOUNT) AS amount_min,
+              MAX(AMOUNT) AS amount_max,
               SUM(AMOUNT) AS amount_sum
           FROM DEV_EDGE_BRONZE.STOREDGE_FMS_PUBLIC.GENERAL_LEDGER_LINE_ITEMS WHERE _FIVETRAN_ACTIVE = TRUE;
         comparison_note: "Compare each _null_pct, _distinct_count, _min, _max, _sum column between source and target. Column names are identical so direct comparison is possible."
+
+      # ── VALUE_DIST Value Distribution (reversal) ─────────────────────
+      value_distribution_reversal:
+        source_table_name: general_ledger_line_items
+        source: postgresql
+        sourcequery: |
+          SELECT
+              COALESCE(CAST(reversal AS TEXT), '<<NULL>>') AS value,
+              COUNT(*) AS value_count
+          FROM public.general_ledger_line_items
+          GROUP BY COALESCE(CAST(reversal AS TEXT), '<<NULL>>')
+          ORDER BY value_count DESC;
+        target_table_name: GENERAL_LEDGER_LINE_ITEMS
+        target: snowflake
+        targetquery: |
+          SELECT
+              COALESCE(CAST(REVERSAL AS STRING), '<<NULL>>') AS value,
+              COUNT(*) AS value_count
+          FROM DEV_EDGE_BRONZE.STOREDGE_FMS_PUBLIC.GENERAL_LEDGER_LINE_ITEMS WHERE _FIVETRAN_ACTIVE = TRUE
+          GROUP BY COALESCE(CAST(REVERSAL AS STRING), '<<NULL>>')
+          ORDER BY value_count DESC;
+        comparison_note: "Compare value_count by value; NULL is represented explicitly."
+
+      # ── VALUE_DIST Value Distribution (daily_transaction) ─────────────────────
+      value_distribution_daily_transaction:
+        source_table_name: general_ledger_line_items
+        source: postgresql
+        sourcequery: |
+          SELECT
+              COALESCE(CAST(daily_transaction AS TEXT), '<<NULL>>') AS value,
+              COUNT(*) AS value_count
+          FROM public.general_ledger_line_items
+          GROUP BY COALESCE(CAST(daily_transaction AS TEXT), '<<NULL>>')
+          ORDER BY value_count DESC;
+        target_table_name: GENERAL_LEDGER_LINE_ITEMS
+        target: snowflake
+        targetquery: |
+          SELECT
+              COALESCE(CAST(DAILY_TRANSACTION AS STRING), '<<NULL>>') AS value,
+              COUNT(*) AS value_count
+          FROM DEV_EDGE_BRONZE.STOREDGE_FMS_PUBLIC.GENERAL_LEDGER_LINE_ITEMS WHERE _FIVETRAN_ACTIVE = TRUE
+          GROUP BY COALESCE(CAST(DAILY_TRANSACTION AS STRING), '<<NULL>>')
+          ORDER BY value_count DESC;
+        comparison_note: "Compare value_count by value; NULL is represented explicitly."
+
+      # ── VALUE_DIST Value Distribution (hidden) ─────────────────────
+      value_distribution_hidden:
+        source_table_name: general_ledger_line_items
+        source: postgresql
+        sourcequery: |
+          SELECT
+              COALESCE(CAST(hidden AS TEXT), '<<NULL>>') AS value,
+              COUNT(*) AS value_count
+          FROM public.general_ledger_line_items
+          GROUP BY COALESCE(CAST(hidden AS TEXT), '<<NULL>>')
+          ORDER BY value_count DESC;
+        target_table_name: GENERAL_LEDGER_LINE_ITEMS
+        target: snowflake
+        targetquery: |
+          SELECT
+              COALESCE(CAST(HIDDEN AS STRING), '<<NULL>>') AS value,
+              COUNT(*) AS value_count
+          FROM DEV_EDGE_BRONZE.STOREDGE_FMS_PUBLIC.GENERAL_LEDGER_LINE_ITEMS WHERE _FIVETRAN_ACTIVE = TRUE
+          GROUP BY COALESCE(CAST(HIDDEN AS STRING), '<<NULL>>')
+          ORDER BY value_count DESC;
+        comparison_note: "Compare value_count by value; NULL is represented explicitly."
+
+      # ── VALUE_DIST Value Distribution (transaction_type) ─────────────────────
+      value_distribution_transaction_type:
+        source_table_name: general_ledger_line_items
+        source: postgresql
+        sourcequery: |
+          SELECT
+              COALESCE(CAST(transaction_type AS TEXT), '<<NULL>>') AS value,
+              COUNT(*) AS value_count
+          FROM public.general_ledger_line_items
+          GROUP BY COALESCE(CAST(transaction_type AS TEXT), '<<NULL>>')
+          ORDER BY value_count DESC;
+        target_table_name: GENERAL_LEDGER_LINE_ITEMS
+        target: snowflake
+        targetquery: |
+          SELECT
+              COALESCE(CAST(TRANSACTION_TYPE AS STRING), '<<NULL>>') AS value,
+              COUNT(*) AS value_count
+          FROM DEV_EDGE_BRONZE.STOREDGE_FMS_PUBLIC.GENERAL_LEDGER_LINE_ITEMS WHERE _FIVETRAN_ACTIVE = TRUE
+          GROUP BY COALESCE(CAST(TRANSACTION_TYPE AS STRING), '<<NULL>>')
+          ORDER BY value_count DESC;
+        comparison_note: "Compare value_count by value; NULL is represented explicitly."
 
       # ── ⑬ / ⑭ Duplicate Check (Business Key) ─────────────────────
       duplicate_check_business_key:
         source_table_name: general_ledger_line_items
         source: postgresql
         sourcequery: |
-          -- Expect: 0 rows returned. Any row = duplicate business key.
           SELECT
               id,
               COUNT(*) AS duplicate_count
@@ -200,7 +284,6 @@ tables:
         target_table_name: GENERAL_LEDGER_LINE_ITEMS
         target: snowflake
         targetquery: |
-          -- Expect: 0 rows returned. Any row = duplicate business key.
           SELECT
               ID,
               COUNT(*) AS duplicate_count
@@ -209,13 +292,3 @@ tables:
           GROUP BY ID
           HAVING COUNT(*) > 1;
         comparison_note: "Both queries should return 0 rows. Any row means duplicate business-key values exist."
-
-      # ── AI-recommended business-rule checks ──────────────
-      # Run as: SELECT COUNT(*) FROM <table> WHERE NOT (<cond>)
-      # Any count > 0 = data quality issue.
-      # These are not executable blocks — review and adapt manually.
-      # [amount_non_negative] Ensure that the financial amount is non-negative.: amount >= 0
-      # [created_at_before_updated_at] Ensure that the created_at timestamp is earlier than or equal to the updated_at timestamp.: created_at <= updated_at
-      # [uuid_not_null] Ensure that the UUID column is not null.: uuid IS NOT NULL
-      # [transaction_type_not_empty] Ensure that the transaction_type column is not empty if it is provided.: transaction_type IS NULL OR transaction_type <> ''
-      # [id_unique] Ensure that the id column contains unique values.: COUNT(id) = COUNT(DISTINCT id)

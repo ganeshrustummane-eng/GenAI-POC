@@ -1,14 +1,15 @@
 # ============================================================
 # Migration Validator — Data Validation Config
 # Table      : general_ledger_line_items
-# Generated  : 2026-08-13T19:45:56.801113
-# By         : AI (model: gpt-4o)
+# Generated  : 2026-08-17T13:48:52.114625
+# By         : AI (model: claude-sonnet-4-5)
 # Columns    : 19 comparable columns
 #
 # Validation blocks (row count is in bronze.yaml):
 #   data_validation           — normalised full-scan SELECT (all columns)
-#   null_pct_validation       — NULL % per column
-#   distinct_count_validation — distinct value counts per column
+#
+# Note: null_pct_validation and distinct_count_validation have been
+# removed. Only data_validation and count_validation are used.
 #
 # Normalization rules applied automatically:
 #   - Boolean    : TRUE/FALSE -> '1'/'0'
@@ -33,12 +34,11 @@ tables:
       data_validation:
         source_table_name: general_ledger_line_items
         source: postgresql
-        sourcecolumn: effective_on
+        pksourcecolumn: effective_on
         sourcequery: |
-          -- AI-generated query (confidence: 0.95)
-          SELECT 
+          SELECT
             COALESCE(TO_CHAR(effective_on, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS effective_on_normalized,
-            COALESCE(CAST(description AS TEXT), '<<NULL>>') AS description_normalized,
+            COALESCE(TRIM(CAST(description AS TEXT)), '<<NULL>>') AS description_normalized,
             COALESCE(CAST(amount AS TEXT), '<<NULL>>') AS amount_normalized,
             COALESCE(CAST(account_balance_id AS TEXT), '<<NULL>>') AS account_balance_id_normalized,
             COALESCE(CAST(tenant_id AS TEXT), '<<NULL>>') AS tenant_id_normalized,
@@ -49,146 +49,37 @@ tables:
             COALESCE(CAST(uuid AS TEXT), '<<NULL>>') AS uuid_normalized,
             COALESCE(CASE WHEN reversal = true THEN '1' WHEN reversal = false THEN '0' ELSE NULL END, '<<NULL>>') AS reversal_normalized,
             COALESCE(CAST(account_balance_item_id AS TEXT), '<<NULL>>') AS account_balance_item_id_normalized,
-            COALESCE(CAST(internal_account_code AS TEXT), '<<NULL>>') AS internal_account_code_normalized,
+            COALESCE(TRIM(CAST(internal_account_code AS TEXT)), '<<NULL>>') AS internal_account_code_normalized,
             COALESCE(CASE WHEN daily_transaction = true THEN '1' WHEN daily_transaction = false THEN '0' ELSE NULL END, '<<NULL>>') AS daily_transaction_normalized,
-            COALESCE(CAST(transaction_type AS TEXT), '<<NULL>>') AS transaction_type_normalized,
+            COALESCE(TRIM(CAST(transaction_type AS TEXT)), '<<NULL>>') AS transaction_type_normalized,
             COALESCE(CASE WHEN hidden = true THEN '1' WHEN hidden = false THEN '0' ELSE NULL END, '<<NULL>>') AS hidden_normalized,
-            COALESCE(CAST(reference_number AS TEXT), '<<NULL>>') AS reference_number_normalized,
-            COALESCE(CAST(display_code AS TEXT), '<<NULL>>') AS display_code_normalized,
+            COALESCE(TRIM(CAST(reference_number AS TEXT)), '<<NULL>>') AS reference_number_normalized,
+            COALESCE(TRIM(CAST(display_code AS TEXT)), '<<NULL>>') AS display_code_normalized,
             COALESCE(CAST(id AS TEXT), '<<NULL>>') AS id_normalized
-          FROM public.general_ledger_line_items;
+          FROM public.general_ledger_line_items
         target_table_name: GENERAL_LEDGER_LINE_ITEMS
         target: snowflake
-        targetcolumn: EFFECTIVE_ON
+        pktargetcolumn: EFFECTIVE_ON
         targetquery: |
           SELECT
-              COALESCE(CAST(TO_VARCHAR(EFFECTIVE_ON, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>') AS effective_on_normalized,
-              COALESCE(CAST(TRIM(DESCRIPTION) AS STRING), '<<NULL>>') AS description_normalized,
-              COALESCE(CAST(ROUND(CAST(AMOUNT AS NUMBER(38, 2)), 2) AS STRING), '<<NULL>>') AS amount_normalized,
-              COALESCE(CAST(CAST(ACCOUNT_BALANCE_ID AS STRING) AS STRING), '<<NULL>>') AS account_balance_id_normalized,
-              COALESCE(CAST(CAST(TENANT_ID AS STRING) AS STRING), '<<NULL>>') AS tenant_id_normalized,
-              COALESCE(CAST(CAST(LEDGER_ID AS STRING) AS STRING), '<<NULL>>') AS ledger_id_normalized,
-              COALESCE(CAST(CAST(FACILITY_ID AS STRING) AS STRING), '<<NULL>>') AS facility_id_normalized,
-              COALESCE(CAST(TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>') AS created_at_normalized,
-              COALESCE(CAST(TO_VARCHAR(UPDATED_AT, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>') AS updated_at_normalized,
-              COALESCE(CAST(UPPER(TRIM(CAST(UUID AS STRING))) AS STRING), '<<NULL>>') AS uuid_normalized,
-              COALESCE(CAST(CASE WHEN REVERSAL = TRUE THEN '1' WHEN REVERSAL = FALSE THEN '0' ELSE NULL END AS STRING), '<<NULL>>') AS reversal_normalized,
-              COALESCE(CAST(CAST(ACCOUNT_BALANCE_ITEM_ID AS STRING) AS STRING), '<<NULL>>') AS account_balance_item_id_normalized,
-              COALESCE(CAST(TRIM(INTERNAL_ACCOUNT_CODE) AS STRING), '<<NULL>>') AS internal_account_code_normalized,
-              COALESCE(CAST(CASE WHEN DAILY_TRANSACTION = TRUE THEN '1' WHEN DAILY_TRANSACTION = FALSE THEN '0' ELSE NULL END AS STRING), '<<NULL>>') AS daily_transaction_normalized,
-              COALESCE(CAST(TRIM(TRANSACTION_TYPE) AS STRING), '<<NULL>>') AS transaction_type_normalized,
-              COALESCE(CAST(CASE WHEN HIDDEN = TRUE THEN '1' WHEN HIDDEN = FALSE THEN '0' ELSE NULL END AS STRING), '<<NULL>>') AS hidden_normalized,
-              COALESCE(CAST(TRIM(REFERENCE_NUMBER) AS STRING), '<<NULL>>') AS reference_number_normalized,
-              COALESCE(CAST(TRIM(DISPLAY_CODE) AS STRING), '<<NULL>>') AS display_code_normalized,
-              COALESCE(CAST(CAST(ID AS STRING) AS STRING), '<<NULL>>') AS id_normalized
+            COALESCE(TO_VARCHAR(EFFECTIVE_ON, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "effective_on_normalized",
+            COALESCE(CAST(TRIM(DESCRIPTION) AS STRING), '<<NULL>>') AS "description_normalized",
+            COALESCE(CAST(AMOUNT AS STRING), '<<NULL>>') AS "amount_normalized",
+            COALESCE(CAST(ACCOUNT_BALANCE_ID AS STRING), '<<NULL>>') AS "account_balance_id_normalized",
+            COALESCE(CAST(TENANT_ID AS STRING), '<<NULL>>') AS "tenant_id_normalized",
+            COALESCE(CAST(LEDGER_ID AS STRING), '<<NULL>>') AS "ledger_id_normalized",
+            COALESCE(CAST(FACILITY_ID AS STRING), '<<NULL>>') AS "facility_id_normalized",
+            COALESCE(TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "created_at_normalized",
+            COALESCE(TO_VARCHAR(UPDATED_AT, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "updated_at_normalized",
+            COALESCE(CAST(TRIM(UUID) AS STRING), '<<NULL>>') AS "uuid_normalized",
+            COALESCE(CASE WHEN REVERSAL = TRUE THEN '1' WHEN REVERSAL = FALSE THEN '0' ELSE NULL END, '<<NULL>>') AS "reversal_normalized",
+            COALESCE(CAST(ACCOUNT_BALANCE_ITEM_ID AS STRING), '<<NULL>>') AS "account_balance_item_id_normalized",
+            COALESCE(CAST(TRIM(INTERNAL_ACCOUNT_CODE) AS STRING), '<<NULL>>') AS "internal_account_code_normalized",
+            COALESCE(CASE WHEN DAILY_TRANSACTION = TRUE THEN '1' WHEN DAILY_TRANSACTION = FALSE THEN '0' ELSE NULL END, '<<NULL>>') AS "daily_transaction_normalized",
+            COALESCE(CAST(TRIM(TRANSACTION_TYPE) AS STRING), '<<NULL>>') AS "transaction_type_normalized",
+            COALESCE(CASE WHEN HIDDEN = TRUE THEN '1' WHEN HIDDEN = FALSE THEN '0' ELSE NULL END, '<<NULL>>') AS "hidden_normalized",
+            COALESCE(CAST(TRIM(REFERENCE_NUMBER) AS STRING), '<<NULL>>') AS "reference_number_normalized",
+            COALESCE(CAST(TRIM(DISPLAY_CODE) AS STRING), '<<NULL>>') AS "display_code_normalized",
+            COALESCE(CAST(ID AS STRING), '<<NULL>>') AS "id_normalized"
           FROM DEV_EDGE_BRONZE.STOREDGE_FMS_PUBLIC.GENERAL_LEDGER_LINE_ITEMS
-          WHERE _FIVETRAN_ACTIVE = TRUE;
-
-      # ── ⑤ / ⑥ NULL % per column ──────────────────────────────────
-      null_pct_validation:
-        source_table_name: general_ledger_line_items
-        source: postgresql
-        sourcequery: |
-          -- AI-generated
-          SELECT 
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(TO_CHAR(effective_on, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS effective_on_normalized,
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(description AS TEXT), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS description_normalized,
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(amount AS TEXT), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS amount_normalized,
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(account_balance_id AS TEXT), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS account_balance_id_normalized,
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(tenant_id AS TEXT), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS tenant_id_normalized,
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(ledger_id AS TEXT), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS ledger_id_normalized,
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(facility_id AS TEXT), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS facility_id_normalized,
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS created_at_normalized,
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS updated_at_normalized,
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(uuid AS TEXT), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS uuid_normalized,
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(CASE WHEN reversal = true THEN '1' WHEN reversal = false THEN '0' ELSE NULL END, '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS reversal_normalized,
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(account_balance_item_id AS TEXT), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS account_balance_item_id_normalized,
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(internal_account_code AS TEXT), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS internal_account_code_normalized,
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(CASE WHEN daily_transaction = true THEN '1' WHEN daily_transaction = false THEN '0' ELSE NULL END, '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS daily_transaction_normalized,
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(transaction_type AS TEXT), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS transaction_type_normalized,
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(CASE WHEN hidden = true THEN '1' WHEN hidden = false THEN '0' ELSE NULL END, '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS hidden_normalized,
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(reference_number AS TEXT), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS reference_number_normalized,
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(display_code AS TEXT), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS display_code_normalized,
-            ROUND(100.0 * SUM(CASE WHEN COALESCE(CAST(id AS TEXT), '<<NULL>>') = '<<NULL>>' THEN 1 ELSE 0 END) / COUNT(*), 2) AS id_normalized
-          FROM public.general_ledger_line_items;
-        target_table_name: GENERAL_LEDGER_LINE_ITEMS
-        target: snowflake
-        targetquery: |
-          SELECT
-              COUNT(*) AS total_rows,
-              ROUND(100.0 * SUM(CASE WHEN EFFECTIVE_ON IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS effective_on_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN DESCRIPTION IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS description_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN AMOUNT IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS amount_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN ACCOUNT_BALANCE_ID IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS account_balance_id_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN TENANT_ID IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS tenant_id_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN LEDGER_ID IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS ledger_id_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN FACILITY_ID IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS facility_id_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN CREATED_AT IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS created_at_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN UPDATED_AT IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS updated_at_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN UUID IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS uuid_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN REVERSAL IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS reversal_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN ACCOUNT_BALANCE_ITEM_ID IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS account_balance_item_id_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN INTERNAL_ACCOUNT_CODE IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS internal_account_code_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN DAILY_TRANSACTION IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS daily_transaction_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN TRANSACTION_TYPE IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS transaction_type_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN HIDDEN IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS hidden_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN REFERENCE_NUMBER IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS reference_number_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN DISPLAY_CODE IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS display_code_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN ID IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS id_null_pct
-          FROM DEV_EDGE_BRONZE.STOREDGE_FMS_PUBLIC.GENERAL_LEDGER_LINE_ITEMS
-          WHERE _FIVETRAN_ACTIVE = TRUE;
-
-      # ── ⑦ / ⑧ Distinct value counts per column ───────────────────
-      distinct_count_validation:
-        source_table_name: general_ledger_line_items
-        source: postgresql
-        sourcequery: |
-          -- AI-generated
-          SELECT 
-              COUNT(DISTINCT COALESCE(TO_CHAR(effective_on, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>')) AS effective_on_normalized,
-              COUNT(DISTINCT COALESCE(CAST(description AS TEXT), '<<NULL>>')) AS description_normalized,
-              COUNT(DISTINCT COALESCE(CAST(amount AS TEXT), '<<NULL>>')) AS amount_normalized,
-              COUNT(DISTINCT COALESCE(CAST(account_balance_id AS TEXT), '<<NULL>>')) AS account_balance_id_normalized,
-              COUNT(DISTINCT COALESCE(CAST(tenant_id AS TEXT), '<<NULL>>')) AS tenant_id_normalized,
-              COUNT(DISTINCT COALESCE(CAST(ledger_id AS TEXT), '<<NULL>>')) AS ledger_id_normalized,
-              COUNT(DISTINCT COALESCE(CAST(facility_id AS TEXT), '<<NULL>>')) AS facility_id_normalized,
-              COUNT(DISTINCT COALESCE(TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>')) AS created_at_normalized,
-              COUNT(DISTINCT COALESCE(TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>')) AS updated_at_normalized,
-              COUNT(DISTINCT COALESCE(CAST(uuid AS TEXT), '<<NULL>>')) AS uuid_normalized,
-              COUNT(DISTINCT COALESCE(CASE WHEN reversal = true THEN '1' WHEN reversal = false THEN '0' ELSE NULL END, '<<NULL>>')) AS reversal_normalized,
-              COUNT(DISTINCT COALESCE(CAST(account_balance_item_id AS TEXT), '<<NULL>>')) AS account_balance_item_id_normalized,
-              COUNT(DISTINCT COALESCE(CAST(internal_account_code AS TEXT), '<<NULL>>')) AS internal_account_code_normalized,
-              COUNT(DISTINCT COALESCE(CASE WHEN daily_transaction = true THEN '1' WHEN daily_transaction = false THEN '0' ELSE NULL END, '<<NULL>>')) AS daily_transaction_normalized,
-              COUNT(DISTINCT COALESCE(CAST(transaction_type AS TEXT), '<<NULL>>')) AS transaction_type_normalized,
-              COUNT(DISTINCT COALESCE(CASE WHEN hidden = true THEN '1' WHEN hidden = false THEN '0' ELSE NULL END, '<<NULL>>')) AS hidden_normalized,
-              COUNT(DISTINCT COALESCE(CAST(reference_number AS TEXT), '<<NULL>>')) AS reference_number_normalized,
-              COUNT(DISTINCT COALESCE(CAST(display_code AS TEXT), '<<NULL>>')) AS display_code_normalized,
-              COUNT(DISTINCT COALESCE(CAST(id AS TEXT), '<<NULL>>')) AS id_normalized
-          FROM public.general_ledger_line_items;
-        target_table_name: GENERAL_LEDGER_LINE_ITEMS
-        target: snowflake
-        targetquery: |
-          -- Compare distinct counts with ⑦ — large differences indicate data drift.
-          SELECT
-              COUNT(*) AS total_rows,
-              COUNT(DISTINCT EFFECTIVE_ON) AS effective_on_distinct_count,
-              COUNT(DISTINCT DESCRIPTION) AS description_distinct_count,
-              COUNT(DISTINCT AMOUNT) AS amount_distinct_count,
-              COUNT(DISTINCT ACCOUNT_BALANCE_ID) AS account_balance_id_distinct_count,
-              COUNT(DISTINCT TENANT_ID) AS tenant_id_distinct_count,
-              COUNT(DISTINCT LEDGER_ID) AS ledger_id_distinct_count,
-              COUNT(DISTINCT FACILITY_ID) AS facility_id_distinct_count,
-              COUNT(DISTINCT CREATED_AT) AS created_at_distinct_count,
-              COUNT(DISTINCT UPDATED_AT) AS updated_at_distinct_count,
-              COUNT(DISTINCT UUID) AS uuid_distinct_count,
-              COUNT(DISTINCT REVERSAL) AS reversal_distinct_count,
-              COUNT(DISTINCT ACCOUNT_BALANCE_ITEM_ID) AS account_balance_item_id_distinct_count,
-              COUNT(DISTINCT INTERNAL_ACCOUNT_CODE) AS internal_account_code_distinct_count,
-              COUNT(DISTINCT DAILY_TRANSACTION) AS daily_transaction_distinct_count,
-              COUNT(DISTINCT TRANSACTION_TYPE) AS transaction_type_distinct_count,
-              COUNT(DISTINCT HIDDEN) AS hidden_distinct_count,
-              COUNT(DISTINCT REFERENCE_NUMBER) AS reference_number_distinct_count,
-              COUNT(DISTINCT DISPLAY_CODE) AS display_code_distinct_count,
-              COUNT(DISTINCT ID) AS id_distinct_count
-          FROM DEV_EDGE_BRONZE.STOREDGE_FMS_PUBLIC.GENERAL_LEDGER_LINE_ITEMS
-          WHERE _FIVETRAN_ACTIVE = TRUE;
+          WHERE _FIVETRAN_ACTIVE = TRUE

@@ -2,32 +2,35 @@
 
 # AI agent dependencies
 openai>=1.0.0           # DIAL uses the OpenAI-compatible API
-python-dotenv>=1.0.0    # Load DIAL_API_KEY from .env
+python-dotenv>=1.0.0    # Load DIAL_API_KEY from .env and .env credentials
 
 # Fuzzy matching — used by the new matching pipeline
 rapidfuzz>=3.0.0        # Fast Levenshtein/token_ratio; graceful fallback to difflib if absent
 
-# PostgreSQL Database Driver
-psycopg2-binary==2.9.9
+# Database Drivers
+# Lower bounds chosen so prebuilt wheels exist for Python 3.13/3.14 (older pins force source builds)
+psycopg2-binary>=2.9.10                     # PostgreSQL
+pyodbc>=5.2.0                               # Microsoft SQL Server
+snowflake-connector-python>=4.0.0           # Snowflake
+boto3>=1.26.0                               # AWS Athena
 
-# Microsoft SQL Server Database Driver
-pyodbc==5.1.0
-
-# Snowflake Database Connector
-snowflake-connector-python==3.5.0
+# Data Processing
+pandas>=1.5.0           # DataFrame handling for validation
+pyyaml>=6.0             # YAML config file parsing
+pydantic>=2.0           # Schema validation for generated YAML configs (fail at load, not mid-run)
 
 # Optional: For better JSON handling
-python-dateutil==2.8.2
+python-dateutil>=2.8.2
 
 # Optional: For enhanced CLI support
-click==8.1.7
+click>=8.1.7
 
 # Development dependencies (optional)
 # For testing
-pytest==7.4.3
-pytest-cov==4.1.0
+pytest>=7.4.3
+pytest-cov>=4.1.0
 
 # For code quality
-flake8==6.1.0
-black==23.12.0
-pylint==3.0.3
+flake8>=6.1.0
+black>=23.12.0
+pylint>=3.0.3

@@ -1,10 +1,10 @@
 # ============================================================
 # Migration Validator — Dynamic Suite YAML Validation Config
 # Table      : AcctSoftware
-# Generated  : 2026-08-13T19:54:12.186911
+# Generated  : 2026-08-17T11:52:34.380570
 # By         : AI (model: gpt-4o)
-# Checks     : 3 query pair(s)
-#              2 baseline, 1 conditional
+# Checks     : 4 query pair(s)
+#              2 baseline, 2 conditional
 #
 # This file contains schema-aware conditional checks in addition
 # to the baseline 8-query set — MIN/MAX, SUM (financial/quantity),
@@ -38,13 +38,12 @@ tables:
         source: mssql
         sourcequery: |
           SELECT
-              COALESCE(CAST(CAST(AcctSoftwareID AS TEXT) AS TEXT), '<<NULL>>') AS AcctSoftwareID_normalized,
-              COALESCE(CAST(TRIM(sSoftwareName) AS TEXT), '<<NULL>>') AS sSoftwareName_normalized,
-              COALESCE(CAST(CASE WHEN bPermanent = true THEN '1' WHEN bPermanent = false THEN '0' ELSE NULL END AS TEXT), '<<NULL>>') AS bPermanent_normalized,
-              COALESCE(CAST(TO_CHAR(dDeleted, 'YYYY-MM-DD HH24:MI:SS') AS TEXT), '<<NULL>>') AS dDeleted_normalized,
-              COALESCE(CAST(TO_CHAR(dUpdated, 'YYYY-MM-DD HH24:MI:SS') AS TEXT), '<<NULL>>') AS dUpdated_normalized,
-              COALESCE(CAST(TRIM(uTS) AS TEXT), '<<NULL>>') AS uTS_normalized,
-              COALESCE(CAST(CAST(OldPK AS TEXT) AS TEXT), '<<NULL>>') AS OldPK_normalized
+              COALESCE(CAST(CAST(AcctSoftwareID AS VARCHAR(MAX)) AS VARCHAR(MAX)), '<<NULL>>') AS AcctSoftwareID_normalized,
+              COALESCE(CAST(LTRIM(RTRIM(sSoftwareName)) AS VARCHAR(MAX)), '<<NULL>>') AS sSoftwareName_normalized,
+              COALESCE(CAST(CASE WHEN bPermanent = 1 THEN '1' WHEN bPermanent = 0 THEN '0' ELSE NULL END AS VARCHAR(MAX)), '<<NULL>>') AS bPermanent_normalized,
+              COALESCE(CAST(FORMAT(dDeleted, 'yyyy-MM-dd HH:mm:ss') AS VARCHAR(MAX)), '<<NULL>>') AS dDeleted_normalized,
+              COALESCE(CAST(FORMAT(dUpdated, 'yyyy-MM-dd HH:mm:ss') AS VARCHAR(MAX)), '<<NULL>>') AS dUpdated_normalized,
+              COALESCE(CAST(CAST(OldPK AS VARCHAR(MAX)) AS VARCHAR(MAX)), '<<NULL>>') AS OldPK_normalized
           FROM dbo.AcctSoftware;
         target_table_name: ACCTSOFTWARE
         target: snowflake
@@ -55,72 +54,86 @@ tables:
               COALESCE(CAST(CASE WHEN BPERMANENT = TRUE THEN '1' WHEN BPERMANENT = FALSE THEN '0' ELSE NULL END AS STRING), '<<NULL>>') AS bPermanent_normalized,
               COALESCE(CAST(TO_VARCHAR(DDELETED, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>') AS dDeleted_normalized,
               COALESCE(CAST(TO_VARCHAR(DUPDATED, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>') AS dUpdated_normalized,
-              COALESCE(CAST(TRIM(UTS) AS STRING), '<<NULL>>') AS uTS_normalized,
               COALESCE(CAST(CAST(OLDPK AS STRING) AS STRING), '<<NULL>>') AS OldPK_normalized
           FROM DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.ACCTSOFTWARE WHERE _FIVETRAN_ACTIVE = TRUE;
         comparison_note: "Export both to CSV. Compare row-by-row — must be identical. All values are normalised so comparison is type-safe."
 
-      # ── ⑤–⑫ combined Combined Aggregate Query (NULL% + DISTINCT + MIN/MAX + VALUE_DIST) ─────────────────────
-      combined_aggregate_query_null%_distinct_min_max_value_dist:
+      # ── ⑤–⑫ combined Combined Aggregate Query (NULL% + DISTINCT + MIN/MAX) ─────────────────────
+      combined_aggregate_query_null%_distinct_min_max:
         source_table_name: AcctSoftware
         source: mssql
         sourcequery: |
-          -- Includes: NULL% + DISTINCT + MIN/MAX + VALUE_DIST
-          -- One scan replaces 4 separate aggregate query types.
           SELECT
-              COUNT(*) AS total_rows
-              ROUND(100.0 * SUM(CASE WHEN AcctSoftwareID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS AcctSoftwareID_null_pct
-              ROUND(100.0 * SUM(CASE WHEN sSoftwareName IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sSoftwareName_null_pct
-              ROUND(100.0 * SUM(CASE WHEN bPermanent IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS bPermanent_null_pct
-              ROUND(100.0 * SUM(CASE WHEN dDeleted IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dDeleted_null_pct
-              ROUND(100.0 * SUM(CASE WHEN dUpdated IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dUpdated_null_pct
-              ROUND(100.0 * SUM(CASE WHEN uTS IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS uTS_null_pct
-              ROUND(100.0 * SUM(CASE WHEN OldPK IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS OldPK_null_pct
-              COUNT(DISTINCT AcctSoftwareID) AS AcctSoftwareID_distinct_count
-              COUNT(DISTINCT sSoftwareName) AS sSoftwareName_distinct_count
-              COUNT(DISTINCT bPermanent) AS bPermanent_distinct_count
-              COUNT(DISTINCT dDeleted) AS dDeleted_distinct_count
-              COUNT(DISTINCT dUpdated) AS dUpdated_distinct_count
-              COUNT(DISTINCT uTS) AS uTS_distinct_count
-              COUNT(DISTINCT OldPK) AS OldPK_distinct_count
-              MIN(AcctSoftwareID) AS AcctSoftwareID_min
-              MAX(AcctSoftwareID) AS AcctSoftwareID_max
-              MIN(OldPK) AS OldPK_min
+              COUNT(*) AS total_rows,
+              ROUND(100.0 * SUM(CASE WHEN AcctSoftwareID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS AcctSoftwareID_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN sSoftwareName IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sSoftwareName_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN bPermanent IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS bPermanent_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN dDeleted IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dDeleted_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN dUpdated IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dUpdated_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN OldPK IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS OldPK_null_pct,
+              COUNT(DISTINCT AcctSoftwareID) AS AcctSoftwareID_distinct_count,
+              COUNT(DISTINCT sSoftwareName) AS sSoftwareName_distinct_count,
+              COUNT(DISTINCT bPermanent) AS bPermanent_distinct_count,
+              COUNT(DISTINCT dDeleted) AS dDeleted_distinct_count,
+              COUNT(DISTINCT dUpdated) AS dUpdated_distinct_count,
+              COUNT(DISTINCT OldPK) AS OldPK_distinct_count,
+              MIN(AcctSoftwareID) AS AcctSoftwareID_min,
+              MAX(AcctSoftwareID) AS AcctSoftwareID_max,
+              MIN(OldPK) AS OldPK_min,
               MAX(OldPK) AS OldPK_max
           FROM dbo.AcctSoftware;
         target_table_name: ACCTSOFTWARE
         target: snowflake
         targetquery: |
-          -- Includes: NULL% + DISTINCT + MIN/MAX + VALUE_DIST
           SELECT
-              COUNT(*) AS total_rows
-              ROUND(100.0 * SUM(CASE WHEN ACCTSOFTWAREID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS AcctSoftwareID_null_pct
-              ROUND(100.0 * SUM(CASE WHEN SSOFTWARENAME IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sSoftwareName_null_pct
-              ROUND(100.0 * SUM(CASE WHEN BPERMANENT IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS bPermanent_null_pct
-              ROUND(100.0 * SUM(CASE WHEN DDELETED IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dDeleted_null_pct
-              ROUND(100.0 * SUM(CASE WHEN DUPDATED IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dUpdated_null_pct
-              ROUND(100.0 * SUM(CASE WHEN UTS IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS uTS_null_pct
-              ROUND(100.0 * SUM(CASE WHEN OLDPK IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS OldPK_null_pct
-              COUNT(DISTINCT ACCTSOFTWAREID) AS AcctSoftwareID_distinct_count
-              COUNT(DISTINCT SSOFTWARENAME) AS sSoftwareName_distinct_count
-              COUNT(DISTINCT BPERMANENT) AS bPermanent_distinct_count
-              COUNT(DISTINCT DDELETED) AS dDeleted_distinct_count
-              COUNT(DISTINCT DUPDATED) AS dUpdated_distinct_count
-              COUNT(DISTINCT UTS) AS uTS_distinct_count
-              COUNT(DISTINCT OLDPK) AS OldPK_distinct_count
-              MIN(ACCTSOFTWAREID) AS AcctSoftwareID_min
-              MAX(ACCTSOFTWAREID) AS AcctSoftwareID_max
-              MIN(OLDPK) AS OldPK_min
+              COUNT(*) AS total_rows,
+              ROUND(100.0 * SUM(CASE WHEN ACCTSOFTWAREID IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS AcctSoftwareID_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN SSOFTWARENAME IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS sSoftwareName_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN BPERMANENT IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS bPermanent_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN DDELETED IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dDeleted_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN DUPDATED IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS dUpdated_null_pct,
+              ROUND(100.0 * SUM(CASE WHEN OLDPK IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 4) AS OldPK_null_pct,
+              COUNT(DISTINCT ACCTSOFTWAREID) AS AcctSoftwareID_distinct_count,
+              COUNT(DISTINCT SSOFTWARENAME) AS sSoftwareName_distinct_count,
+              COUNT(DISTINCT BPERMANENT) AS bPermanent_distinct_count,
+              COUNT(DISTINCT DDELETED) AS dDeleted_distinct_count,
+              COUNT(DISTINCT DUPDATED) AS dUpdated_distinct_count,
+              COUNT(DISTINCT OLDPK) AS OldPK_distinct_count,
+              MIN(ACCTSOFTWAREID) AS AcctSoftwareID_min,
+              MAX(ACCTSOFTWAREID) AS AcctSoftwareID_max,
+              MIN(OLDPK) AS OldPK_min,
               MAX(OLDPK) AS OldPK_max
           FROM DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.ACCTSOFTWARE WHERE _FIVETRAN_ACTIVE = TRUE;
         comparison_note: "Compare each _null_pct, _distinct_count, _min, _max, _sum column between source and target. Column names are identical so direct comparison is possible."
+
+      # ── VALUE_DIST Value Distribution (bPermanent) ─────────────────────
+      value_distribution_bpermanent:
+        source_table_name: AcctSoftware
+        source: mssql
+        sourcequery: |
+          SELECT
+              COALESCE(CAST(bPermanent AS VARCHAR(MAX)), '<<NULL>>') AS value,
+              COUNT(*) AS value_count
+          FROM dbo.AcctSoftware
+          GROUP BY COALESCE(CAST(bPermanent AS VARCHAR(MAX)), '<<NULL>>')
+          ORDER BY value_count DESC;
+        target_table_name: ACCTSOFTWARE
+        target: snowflake
+        targetquery: |
+          SELECT
+              COALESCE(CAST(BPERMANENT AS STRING), '<<NULL>>') AS value,
+              COUNT(*) AS value_count
+          FROM DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.ACCTSOFTWARE WHERE _FIVETRAN_ACTIVE = TRUE
+          GROUP BY COALESCE(CAST(BPERMANENT AS STRING), '<<NULL>>')
+          ORDER BY value_count DESC;
+        comparison_note: "Compare value_count by value; NULL is represented explicitly."
 
       # ── AI-recommended business-rule checks ──────────────
       # Run as: SELECT COUNT(*) FROM <table> WHERE NOT (<cond>)
       # Any count > 0 = data quality issue.
       # These are not executable blocks — review and adapt manually.
       # [dDeleted_after_dUpdated] Ensure that the deletion timestamp (dDeleted) is not earlier than the last update timestamp (dUpdated).: dDeleted IS NULL OR dDeleted >= dUpdated
-      # [uTS_after_dUpdated] Ensure that the system timestamp (uTS) is not earlier than the last update timestamp (dUpdated).: uTS >= dUpdated
-      # [OldPK_positive] Ensure that the OldPK column, if not NULL, contains only positive values.: OldPK IS NULL OR OldPK > 0
-      # [sSoftwareName_not_empty] Ensure that the software name (sSoftwareName) is not an empty string.: sSoftwareName <> ''
-      # [bPermanent_consistency] Ensure that the bPermanent column contains only valid boolean values (true or false).: bPermanent IN (TRUE, FALSE)
+      # [OldPK_positive] Ensure that the OldPK column, if present, contains only positive values.: OldPK IS NULL OR OldPK > 0
+      # [sSoftwareName_non_empty] Ensure that the software name column (sSoftwareName) contains non-empty values.: sSoftwareName <> ''
+      # [AcctSoftwareID_positive] Ensure that the AcctSoftwareID column contains only positive values.: AcctSoftwareID > 0
+      # [bPermanent_not_null] Ensure that the bPermanent column contains only valid boolean values (true or false).: bPermanent IN (TRUE, FALSE)

@@ -12,7 +12,7 @@ Usage:
     sf_expr  = rule.apply_snowflake("IS_ACTIVE")
 """
 
-from rules.postgres_base_rules import (
+from .postgres_base_rules import (
     BaseValidationRule, RuleRegistry, NULL_PLACEHOLDER,
     BooleanRule, NumericRule, TimestampTZRule, TimestampNTZRule,
     DateRule, TextRule, UUIDRule, IntegerRule, JSONRule,

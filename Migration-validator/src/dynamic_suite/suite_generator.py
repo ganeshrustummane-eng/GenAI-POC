@@ -97,6 +97,7 @@ class DynamicSuiteGenerator:
         use_ai_recommendations: bool = True,
         generated_by:           str = "static",
         model_used:             str = "N/A",
+        source_db_type:         str = "postgresql",
     ) -> ValidationSuite:
         """
         Build the complete dynamic validation suite for one table pair.
@@ -149,6 +150,7 @@ class DynamicSuiteGenerator:
             sf_full=sf_full,
             fivetran_active=has_fivetran_active,
             active_mappings=active_mappings,
+            source_db_type=source_db_type,
         )
         print(
             f"  [DynamicSuite] Optimised to {len(queries)} query pair(s) "
@@ -169,6 +171,7 @@ class DynamicSuiteGenerator:
             generated_by=generated_by,
             model_used=model_used,
             has_fivetran_active=has_fivetran_active,
+            source_db_type=source_db_type,
         )
 
         print(

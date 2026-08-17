@@ -1,14 +1,15 @@
 # ============================================================
 # Migration Validator — Data Validation Config
 # Table      : AcctSoftware
-# Generated  : 2026-08-13T19:53:46.482268
+# Generated  : 2026-08-17T11:52:23.392411
 # By         : AI (model: gpt-4o)
-# Columns    : 7 comparable columns
+# Columns    : 6 comparable columns
 #
 # Validation blocks (row count is in bronze.yaml):
 #   data_validation           — normalised full-scan SELECT (all columns)
-#   null_pct_validation       — NULL % per column
-#   distinct_count_validation — distinct value counts per column
+#
+# Note: null_pct_validation and distinct_count_validation have been
+# removed. Only data_validation and count_validation are used.
 #
 # Normalization rules applied automatically:
 #   - Boolean    : TRUE/FALSE -> '1'/'0'
@@ -33,90 +34,26 @@ tables:
       data_validation:
         source_table_name: AcctSoftware
         source: mssql
-        sourcecolumn: AcctSoftwareID
+        pksourcecolumn: AcctSoftwareID
         sourcequery: |
-          -- AI-generated query (confidence: 0.95)
           SELECT 
-            COALESCE(CAST(AcctSoftwareID AS VARCHAR(MAX)), '<<NULL>>') AS AcctSoftwareID_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(sSoftwareName)) AS VARCHAR(MAX)), '<<NULL>>') AS sSoftwareName_normalized,
-            COALESCE(CASE WHEN bPermanent = 1 THEN '1' WHEN bPermanent = 0 THEN '0' ELSE NULL END, '<<NULL>>') AS bPermanent_normalized,
-            COALESCE(FORMAT(dDeleted, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') AS dDeleted_normalized,
-            COALESCE(FORMAT(dUpdated, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') AS dUpdated_normalized,
-            COALESCE(CAST(LTRIM(RTRIM(uTS)) AS VARCHAR(MAX)), '<<NULL>>') AS uTS_normalized,
-            COALESCE(CAST(OldPK AS VARCHAR(MAX)), '<<NULL>>') AS OldPK_normalized
+              COALESCE(CAST(AcctSoftwareID AS VARCHAR(MAX)), '<<NULL>>') AS AcctSoftwareID_normalized,
+              COALESCE(LTRIM(RTRIM(CAST(sSoftwareName AS VARCHAR(MAX)))), '<<NULL>>') AS sSoftwareName_normalized,
+              COALESCE(CASE WHEN bPermanent = 1 THEN '1' WHEN bPermanent = 0 THEN '0' ELSE NULL END, '<<NULL>>') AS bPermanent_normalized,
+              COALESCE(FORMAT(dDeleted, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') AS dDeleted_normalized,
+              COALESCE(FORMAT(dUpdated, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') AS dUpdated_normalized,
+              COALESCE(CAST(OldPK AS VARCHAR(MAX)), '<<NULL>>') AS OldPK_normalized
           FROM dbo.AcctSoftware;
         target_table_name: ACCTSOFTWARE
         target: snowflake
-        targetcolumn: ACCTSOFTWAREID
+        pktargetcolumn: ACCTSOFTWAREID
         targetquery: |
-          SELECT
-              COALESCE(CAST(CAST(ACCTSOFTWAREID AS STRING) AS STRING), '<<NULL>>') AS AcctSoftwareID_normalized,
-              COALESCE(CAST(TRIM(SSOFTWARENAME) AS STRING), '<<NULL>>') AS sSoftwareName_normalized,
-              COALESCE(CAST(CASE WHEN BPERMANENT = TRUE THEN '1' WHEN BPERMANENT = FALSE THEN '0' ELSE NULL END AS STRING), '<<NULL>>') AS bPermanent_normalized,
-              COALESCE(CAST(TO_VARCHAR(DDELETED, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>') AS dDeleted_normalized,
-              COALESCE(CAST(TO_VARCHAR(DUPDATED, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>') AS dUpdated_normalized,
-              COALESCE(CAST(TRIM(UTS) AS STRING), '<<NULL>>') AS uTS_normalized,
-              COALESCE(CAST(CAST(OLDPK AS STRING) AS STRING), '<<NULL>>') AS OldPK_normalized
-          FROM DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.ACCTSOFTWARE
-          WHERE _FIVETRAN_ACTIVE = TRUE;
-
-      # ── ⑤ / ⑥ NULL % per column ──────────────────────────────────
-      null_pct_validation:
-        source_table_name: AcctSoftware
-        source: mssql
-        sourcequery: |
-          -- AI-generated
           SELECT 
-              ROUND(100.0 * SUM(CASE WHEN AcctSoftwareID IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS AcctSoftwareID_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN sSoftwareName IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sSoftwareName_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN bPermanent IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS bPermanent_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN dDeleted IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS dDeleted_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN dUpdated IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS dUpdated_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN uTS IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS uTS_null_percentage,
-              ROUND(100.0 * SUM(CASE WHEN OldPK IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS OldPK_null_percentage
-          FROM dbo.AcctSoftware;
-        target_table_name: ACCTSOFTWARE
-        target: snowflake
-        targetquery: |
-          SELECT
-              COUNT(*) AS total_rows,
-              ROUND(100.0 * SUM(CASE WHEN ACCTSOFTWAREID IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS AcctSoftwareID_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN SSOFTWARENAME IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS sSoftwareName_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN BPERMANENT IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS bPermanent_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN DDELETED IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS dDeleted_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN DUPDATED IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS dUpdated_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN UTS IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS uTS_null_pct,
-              ROUND(100.0 * SUM(CASE WHEN OLDPK IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS OldPK_null_pct
-          FROM DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.ACCTSOFTWARE
-          WHERE _FIVETRAN_ACTIVE = TRUE;
-
-      # ── ⑦ / ⑧ Distinct value counts per column ───────────────────
-      distinct_count_validation:
-        source_table_name: AcctSoftware
-        source: mssql
-        sourcequery: |
-          -- AI-generated
-          SELECT 
-              COUNT(DISTINCT COALESCE(CAST(AcctSoftwareID AS VARCHAR(MAX)), '<<NULL>>')) AS AcctSoftwareID_normalized,
-              COUNT(DISTINCT COALESCE(CAST(LTRIM(RTRIM(sSoftwareName)) AS VARCHAR(MAX)), '<<NULL>>')) AS sSoftwareName_normalized,
-              COUNT(DISTINCT COALESCE(CASE WHEN bPermanent = 1 THEN '1' WHEN bPermanent = 0 THEN '0' ELSE NULL END, '<<NULL>>')) AS bPermanent_normalized,
-              COUNT(DISTINCT COALESCE(FORMAT(dDeleted, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>')) AS dDeleted_normalized,
-              COUNT(DISTINCT COALESCE(FORMAT(dUpdated, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>')) AS dUpdated_normalized,
-              COUNT(DISTINCT COALESCE(CAST(LTRIM(RTRIM(uTS)) AS VARCHAR(MAX)), '<<NULL>>')) AS uTS_normalized,
-              COUNT(DISTINCT COALESCE(CAST(OldPK AS VARCHAR(MAX)), '<<NULL>>')) AS OldPK_normalized
-          FROM dbo.AcctSoftware;
-        target_table_name: ACCTSOFTWARE
-        target: snowflake
-        targetquery: |
-          -- Compare distinct counts with ⑦ — large differences indicate data drift.
-          SELECT
-              COUNT(*) AS total_rows,
-              COUNT(DISTINCT ACCTSOFTWAREID) AS AcctSoftwareID_distinct_count,
-              COUNT(DISTINCT SSOFTWARENAME) AS sSoftwareName_distinct_count,
-              COUNT(DISTINCT BPERMANENT) AS bPermanent_distinct_count,
-              COUNT(DISTINCT DDELETED) AS dDeleted_distinct_count,
-              COUNT(DISTINCT DUPDATED) AS dUpdated_distinct_count,
-              COUNT(DISTINCT UTS) AS uTS_distinct_count,
-              COUNT(DISTINCT OLDPK) AS OldPK_distinct_count
+              COALESCE(CAST(ACCTSOFTWAREID AS STRING), '<<NULL>>') AS "AcctSoftwareID_normalized",
+              COALESCE(CAST(SSOFTWARENAME AS STRING), '<<NULL>>') AS "sSoftwareName_normalized",
+              COALESCE(CASE WHEN BPERMANENT = TRUE THEN '1' WHEN BPERMANENT = FALSE THEN '0' ELSE NULL END, '<<NULL>>') AS "bPermanent_normalized",
+              COALESCE(TO_VARCHAR(DDELETED, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "dDeleted_normalized",
+              COALESCE(TO_VARCHAR(DUPDATED, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "dUpdated_normalized",
+              COALESCE(CAST(OLDPK AS STRING), '<<NULL>>') AS "OldPK_normalized"
           FROM DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.ACCTSOFTWARE
           WHERE _FIVETRAN_ACTIVE = TRUE;
