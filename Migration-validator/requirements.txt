@@ -2,6 +2,7 @@
 
 # AI agent dependencies
 openai>=1.0.0           # DIAL uses the OpenAI-compatible API
+anthropic>=1.0.0        # Anthropic-compatible API
 python-dotenv>=1.0.0    # Load DIAL_API_KEY from .env and .env credentials
 
 # Fuzzy matching — used by the new matching pipeline

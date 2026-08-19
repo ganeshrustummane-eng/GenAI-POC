@@ -1,7 +1,11 @@
 version: '1.0'
-last_updated: '2026-08-18'
+last_updated: '2026-08-19'
+description: >
+  Column exclusions for the PostgreSQL source database type. Every entry in
+  this file is applied to BOTH PostgreSQL source tables AND their Snowflake
+  target counterparts, across all PostgreSQL connections/databases.
 global_exclusions:
-  description: Columns excluded from ALL tables regardless of source/target database
+  description: Columns excluded from ALL PostgreSQL-sourced tables, source and target
   columns:
   - column_name: _FIVETRAN_DELETED
     reason: Fivetran soft-delete flag - internal metadata
@@ -20,16 +24,6 @@ global_exclusions:
     reason: Fivetran array index for nested structures
     applies_to:
     - target
-  - column_name: UTS
-    reason: SQL Server rowversion/timestamp - binary data not suitable for validation
-    applies_to:
-    - source
-    - target
-  - column_name: uTS
-    reason: SQL Server rowversion/timestamp (case variant)
-    applies_to:
-    - source
-    - target
 pattern_exclusions:
   description: Exclude columns matching these regex patterns (case-insensitive)
   patterns:
@@ -41,13 +35,4 @@ pattern_exclusions:
 settings:
   log_exclusions: true
   log_level: INFO
-user_global_exclusions:
-- column_name: uts
-  reason: User-defined global exclusion
-  applies_to:
-  - source
-  - target
-  added_by: CLI
-  date_added: '2026-08-19'
-
-
+user_global_exclusions: []

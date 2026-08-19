@@ -154,6 +154,7 @@ class QueryOutputManager:
         generated_by: str = "static",
         model_used: str = "N/A",
         source_db_type: str = "postgresql",
+        output_dir: Optional[Path] = None,
     ) -> GenerationResult:
         """
         Generate all validation output for one table pair.
@@ -197,7 +198,7 @@ class QueryOutputManager:
             source_db_type=source_db_type,
         )
 
-        # ── Step 2: Save YAML config file → config/bronze/data_validation/ ───
+        # ── Step 2: Save YAML config file → config/<layer>/data_validation/ ──
         yaml_path = self._yaml_writer.write(
             query_set=query_set,
             source_db_type=source_db_type,
@@ -208,9 +209,10 @@ class QueryOutputManager:
             sf_table=sf_table,
             mappings=active,
             has_fivetran_active=has_fivetran_active,
+            output_dir=output_dir,
         )
 
-        # ── Step 3: Save count-only YAML → config/bronze/count_validation/ ───
+        # ── Step 3: Save count-only YAML → config/<layer>/count_validation/ ──
         count_yaml_path = self._yaml_writer.write_count_yaml(
             query_set=query_set,
             source_db_type=source_db_type,
@@ -220,6 +222,7 @@ class QueryOutputManager:
             sf_schema=sf_schema,
             sf_table=sf_table,
             has_fivetran_active=has_fivetran_active,
+            output_dir=output_dir,
         )
 
         result = GenerationResult(
@@ -241,7 +244,7 @@ class QueryOutputManager:
     # Private helpers
     # -----------------------------------------------------------------------
 
-    def generate_from_plan(self, plan: "CanonicalValidationPlan") -> GenerationResult:
+    def generate_from_plan(self, plan: "CanonicalValidationPlan", output_dir: Optional[Path] = None) -> GenerationResult:
         """
         Generate all validation output from a CanonicalValidationPlan.
 
@@ -280,8 +283,8 @@ class QueryOutputManager:
 
         # ── Render targets, both from the same plan ──────────────────────────
         query_set       = self._sql_gen.generate_from_plan(plan)
-        yaml_path       = self._yaml_writer.write_from_plan(plan, query_set)
-        count_yaml_path = self._yaml_writer.write_count_yaml_from_plan(plan, query_set)
+        yaml_path       = self._yaml_writer.write_from_plan(plan, query_set, output_dir=output_dir)
+        count_yaml_path = self._yaml_writer.write_count_yaml_from_plan(plan, query_set, output_dir=output_dir)
 
         skipped_names = [m.source_column for m in skipped]
         result = GenerationResult(

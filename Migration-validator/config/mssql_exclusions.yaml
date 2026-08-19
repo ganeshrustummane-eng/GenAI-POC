@@ -1,7 +1,11 @@
 version: '1.0'
-last_updated: '2026-08-18'
+last_updated: '2026-08-19'
+description: >
+  Column exclusions for the MSSQL (Microsoft SQL Server) source database type.
+  Every entry in this file is applied to BOTH MSSQL source tables AND their
+  Snowflake target counterparts, across all MSSQL connections/databases.
 global_exclusions:
-  description: Columns excluded from ALL tables regardless of source/target database
+  description: Columns excluded from ALL MSSQL-sourced tables, source and target
   columns:
   - column_name: _FIVETRAN_DELETED
     reason: Fivetran soft-delete flag - internal metadata
@@ -49,5 +53,3 @@ user_global_exclusions:
   - target
   added_by: CLI
   date_added: '2026-08-19'
-
-

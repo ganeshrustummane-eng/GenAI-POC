@@ -154,7 +154,6 @@ def _normalize_db_type(raw: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 STATIC_EXCLUDE_COLUMNS: list = [
-    # Fivetran metadata
     "_fivetran_synced",
     "_fivetran_deleted",
     "_fivetran_id",
@@ -162,37 +161,40 @@ STATIC_EXCLUDE_COLUMNS: list = [
     "_fivetran_start",
     "_fivetran_end",
     "_fivetran_active",
-    # Common audit / CDC columns injected at load time
-    "etl_insert_dt",
-    "etl_update_dt",
-    "etl_batch_id",
-    "dw_insert_dt",
-    "dw_update_dt",
-    "dw_batch_id",
-    "load_dt",
-    "load_ts",
-    "created_at_dw",
-    "updated_at_dw",
-    "record_source",
-    "hash_diff",
-    "dv_load_dt",
-    "dv_record_source",
 ]
 
-_EXCLUSIONS_YAML_PATH = _SRC_DIR.parent / "config" / "exclusions.yaml"
+_EXCLUSIONS_DIR = _SRC_DIR.parent / "config"
+
+# One exclusions file per SOURCE database type. Whatever is listed in a given
+# file is excluded from BOTH that source type AND the Snowflake target — e.g.
+# everything in postgresql_exclusions.yaml applies to PostgreSQL source columns
+# and their Snowflake counterparts, regardless of which PostgreSQL database/table.
+_EXCLUSION_FILE_BY_DB_TYPE = {
+    "postgresql": _EXCLUSIONS_DIR / "postgresql_exclusions.yaml",
+    "mssql":      _EXCLUSIONS_DIR / "mssql_exclusions.yaml",
+    "athena":     _EXCLUSIONS_DIR / "athena_exclusions.yaml",
+}
 
 
-def _load_global_user_exclusions() -> list:
+def _exclusions_path_for(db_type: str) -> Path:
+    """Resolve the exclusions YAML file for a given SOURCE database type."""
+    key = _normalize_db_type(db_type or "postgresql")
+    return _EXCLUSION_FILE_BY_DB_TYPE.get(key, _EXCLUSION_FILE_BY_DB_TYPE["postgresql"])
+
+
+def _load_global_user_exclusions(db_type: str) -> list:
     """
-    Load user-defined global column exclusions from config/exclusions.yaml.
-    Returns a list of lowercase column names that should be excluded
-    from ALL tables in BOTH source and target, regardless of database.
+    Load user-defined global column exclusions from the exclusions YAML file
+    that corresponds to `db_type` (postgresql/mssql/athena).
+    Returns a list of lowercase column names that should be excluded from
+    ALL tables of that source type, in BOTH source and Snowflake target.
     """
     import yaml
+    path = _exclusions_path_for(db_type)
     try:
-        if not _EXCLUSIONS_YAML_PATH.exists():
+        if not path.exists():
             return []
-        with open(_EXCLUSIONS_YAML_PATH, encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         entries = data.get("user_global_exclusions", [])
         if not isinstance(entries, list):
@@ -206,18 +208,20 @@ def _load_global_user_exclusions() -> list:
         return []
 
 
-def _save_global_user_exclusion(column_name: str, reason: str, added_by: str = "") -> bool:
+def _save_global_user_exclusion(db_type: str, column_name: str, reason: str, added_by: str = "") -> bool:
     """
-    Append a new global column exclusion to config/exclusions.yaml.
-    The column will be excluded from ALL tables in source AND target.
+    Append a new global column exclusion to the exclusions YAML file for
+    `db_type` (postgresql/mssql/athena). The column will be excluded from
+    every table of that source type AND the Snowflake target.
     Returns True on success.
     """
     import yaml
     import datetime
+    path = _exclusions_path_for(db_type)
     try:
         data = {}
-        if _EXCLUSIONS_YAML_PATH.exists():
-            with open(_EXCLUSIONS_YAML_PATH, encoding="utf-8") as f:
+        if path.exists():
+            with open(path, encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
 
         if "user_global_exclusions" not in data:
@@ -240,22 +244,23 @@ def _save_global_user_exclusion(column_name: str, reason: str, added_by: str = "
             "date_added":   datetime.date.today().isoformat(),
         })
 
-        _EXCLUSIONS_YAML_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(_EXCLUSIONS_YAML_PATH, "w", encoding="utf-8") as f:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
             yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
         return True
     except Exception:
         return False
 
 
-def _get_all_exclusions() -> list:
+def _get_all_exclusions(db_type: str) -> list:
     """
-    Return merged list of all globally excluded column names (lowercase).
-    Combines: STATIC_EXCLUDE_COLUMNS + user_global_exclusions from exclusions.yaml.
-    Applied to BOTH source and target, across ALL databases.
+    Return merged list of all globally excluded column names (lowercase) for
+    `db_type` (postgresql/mssql/athena). Combines: STATIC_EXCLUDE_COLUMNS +
+    user_global_exclusions from that source type's exclusions YAML file.
+    Applied to BOTH that source type and the Snowflake target.
     """
     static = [c.lower() for c in STATIC_EXCLUDE_COLUMNS]
-    user   = _load_global_user_exclusions()
+    user   = _load_global_user_exclusions(db_type)
     seen   = set()
     merged = []
     for c in static + user:
@@ -735,10 +740,14 @@ def cmd_generate(args):
         current_model = os.getenv("DIAL_MODEL", "gpt-4o")
     rec = None  # set when user picks a source connection interactively
 
-    # Parse --exclude  →  merge user list with ALL global exclusions (static + saved)
+    # Parse --exclude  →  merge user list with ALL global exclusions (static + saved).
+    # The source database type isn't known yet (connection not picked), so this
+    # uses the PostgreSQL exclusions file as a placeholder default; it is
+    # recomputed below with the correct per-source-type file once the source
+    # connection (and its db_type) has been resolved.
     exclude_raw  = getattr(args, "exclude", None) or ""
     user_exclude = [c.strip().lower() for c in exclude_raw.split(",") if c.strip()] if exclude_raw else []
-    all_global   = _get_all_exclusions()   # static + user_global_exclusions from exclusions.yaml
+    all_global   = _get_all_exclusions("postgresql")
     seen = set()
     exclude_cols = []
     for c in all_global + user_exclude:
@@ -837,8 +846,24 @@ def cmd_generate(args):
             sf_schema   = sf_schema   or os.getenv("SNOWFLAKE_SCHEMA",   "")
             sf_database = sf_database or os.getenv("SNOWFLAKE_DATABASE", "")
 
+    # Recompute global exclusions now that the source connection (and its
+    # db_type) is known, so the correct <db_type>_exclusions.yaml is used —
+    # its entries apply to BOTH this source and the Snowflake target.
+    _src_db_type = _normalize_db_type(rec["db_type"]) if rec else _normalize_db_type(os.getenv("SOURCE_TYPE", "postgresql"))
+    _all_global  = _get_all_exclusions(_src_db_type)
+    _seen = set()
+    exclude_cols = []
+    for c in _all_global + user_exclude:
+        if c not in _seen:
+            _seen.add(c)
+            exclude_cols.append(c)
+
     if not getattr(args, "exclude", None):
-        exclude_cols = _select_column_exclusions(rec, pg_schema, pg_table, exclude_cols)
+        want_custom_excl = input(
+            "\n  Do you want to exclude any custom columns? [y/N]: "
+        ).strip().lower()
+        if want_custom_excl in ("y", "yes"):
+            exclude_cols = _select_column_exclusions(rec, pg_schema, pg_table, exclude_cols)
 
     # ── Config summary — detect active backend correctly ────────────────────
     _dial_key_chk   = os.getenv("DIAL_API_KEY", "")
@@ -888,6 +913,15 @@ def cmd_generate(args):
         _dim("Cancelled.")
         return
 
+    # ── Layer selection ───────────────────────────────────────────────────────
+    print(f"\n  {_C.BOLD}Select data layer:{_C.RESET}")
+    print(f"    {_C.CYAN}[1]{_C.RESET}  bronze  (default)")
+    print(f"    {_C.CYAN}[2]{_C.RESET}  silver")
+    print(f"    {_C.CYAN}[3]{_C.RESET}  gold")
+    _layer_choice = input("  Layer [1]: ").strip() or "1"
+    _layer = {"1": "bronze", "2": "silver", "3": "gold"}.get(_layer_choice, "bronze")
+    _output_dir = Path(__file__).parent.parent / "Project" / "config" / _layer
+
     # ── Run pipeline ──────────────────────────────────────────────────────────
     print()
     try:
@@ -901,6 +935,7 @@ def cmd_generate(args):
             sf_database=sf_database,
             pg_database=pg_database,
             exclude_columns=exclude_cols or None,
+            output_dir=_output_dir,
         )
         _show_output_summary(result, pg_database=pg_database)
 
@@ -1637,9 +1672,11 @@ def cmd_interactive():
     print(_env_status_block())
     print(f"\n  {_C.DIM}Rule Book : {stats['base_rules']} base + {stats['learned_rules']} learned = {stats['total_rules']} total rules{_C.RESET}")
 
-    # Badge: count user global exclusions for display in menu
-    user_excl    = _load_global_user_exclusions()
-    excl_badge   = f"  {_C.DIM}({len(user_excl)} saved){_C.RESET}" if user_excl else ""
+    # Badge: count user global exclusions across all 3 source-type files
+    user_excl_count = sum(
+        len(_load_global_user_exclusions(t)) for t in ("postgresql", "mssql", "athena")
+    )
+    excl_badge   = f"  {_C.DIM}({user_excl_count} saved){_C.RESET}" if user_excl_count else ""
 
     # Badge: show current AI model and key status
     # IMPORTANT: Claude backend uses CLAUDE_MODEL, not DIAL_MODEL
@@ -1679,8 +1716,6 @@ def cmd_interactive():
     {_C.CYAN}[6]{_C.RESET}  Add custom rule
     {_C.CYAN}[7]{_C.RESET}  List available AI models
     {_C.CYAN}[8]{_C.RESET}  Configure API key  ← set/change DIAL or Claude API key in .env
-    {_C.CYAN}[9]{_C.RESET}  Execute YAML       ← run source + target queries from a saved YAML, see pass/fail
-
     {_C.DIM}[q]{_C.RESET}  Quit
 """)
 
@@ -1723,12 +1758,10 @@ def cmd_interactive():
         cmd_add_exclusion(ns)
     elif choice in ("8", "api-key", "configure-api", "apikey"):
         cmd_configure_api_key(ns)
-    elif choice in ("9", "execute", "run-yaml", "exec"):
-        cmd_execute_yaml(ns)
     elif choice in ("q", "quit", "exit"):
         _dim("Bye!")
     else:
-        _warn(f"Unknown choice '{choice}'. Please enter 1-9, c, e, or q.")
+        _warn(f"Unknown choice '{choice}'. Please enter 1-8, c, e, or q.")
 
 
 def _pick_source_connection() -> Optional[dict]:
@@ -2153,16 +2186,19 @@ def _select_column_exclusions(rec: dict, schema: str, table: str, initial=None) 
     """
     Interactive column exclusion prompt — two options:
 
-      Option G — GLOBAL: exclude this column from ALL tables, BOTH source and
-                 target, regardless of database. Saved permanently to
-                 config/exclusions.yaml under user_global_exclusions.
+      Option G — GLOBAL: exclude this column from ALL tables of THIS SOURCE
+                 DATABASE TYPE, in both that source and the Snowflake target.
+                 Saved permanently to config/<db_type>_exclusions.yaml under
+                 user_global_exclusions.
 
       Option T — TABLE-ONLY: exclude column only for this specific table run.
                  Not saved anywhere; applies to current session only.
 
     Shows every column in the table with auto-excluded columns marked [auto].
     """
-    all_excluded = _get_all_exclusions()      # static + user global
+    src_db_type  = _normalize_db_type((rec or {}).get("db_type", "postgresql"))
+    excl_path    = _exclusions_path_for(src_db_type)
+    all_excluded = _get_all_exclusions(src_db_type)      # static + user global for this source type
     selected     = list(initial or [])
 
     # Fetch live columns from source
@@ -2198,8 +2234,8 @@ def _select_column_exclusions(rec: dict, schema: str, table: str, initial=None) 
 
     # ── Show exclusion options ────────────────────────────────────────────────
     print(f"\n  {_C.BOLD}Exclusion Options:{_C.RESET}")
-    print(f"    {_C.GREEN}[G]{_C.RESET}  Global  — exclude column(s) from ALL tables, source & target")
-    print(f"              Saved permanently to config/exclusions.yaml")
+    print(f"    {_C.GREEN}[G]{_C.RESET}  Global  — exclude column(s) from ALL {_DB_TYPE_LABELS.get(src_db_type, src_db_type)} tables, source & Snowflake target")
+    print(f"              Saved permanently to config/{excl_path.name}")
     print(f"    {_C.CYAN}[T]{_C.RESET}  Table   — exclude column(s) for THIS table only (this run)")
     print(f"    {_C.DIM}[N]{_C.RESET}  None    — no additional exclusions (just keep [auto] ones)")
     print()
@@ -2261,7 +2297,7 @@ def _select_column_exclusions(rec: dict, schema: str, table: str, initial=None) 
         saved   = []
         skipped = []
         for col in new_cols:
-            ok = _save_global_user_exclusion(col, reason)
+            ok = _save_global_user_exclusion(src_db_type, col, reason)
             if ok:
                 saved.append(col)
                 selected.append(col)
@@ -2272,7 +2308,8 @@ def _select_column_exclusions(rec: dict, schema: str, table: str, initial=None) 
         if saved:
             _ok(
                 f"Saved {len(saved)} global exclusion(s) to "
-                f"config/exclusions.yaml → user_global_exclusions"
+                f"config/{excl_path.name} → user_global_exclusions "
+                f"(applies to {_DB_TYPE_LABELS.get(src_db_type, src_db_type)} source + Snowflake target)"
             )
             for col in saved:
                 print(f"    {_C.GREEN}✓{_C.RESET}  {col}  ({reason})")
@@ -2544,10 +2581,12 @@ def cmd_add_exclusion(args):
 
     print(f"""
   {_C.BOLD}What is a Global Exclusion?{_C.RESET}
-  {_C.DIM}A column added here is excluded from validation in:
-    • ALL source tables  (PostgreSQL / MSSQL / Athena — any database)
-    • ALL target tables  (Snowflake)
-    • EVERY run          (saved permanently to config/exclusions.yaml)
+  {_C.DIM}A column added here is excluded from validation for ONE source
+  database type, in BOTH that source and the Snowflake target:
+    • PostgreSQL  → saved to config/postgresql_exclusions.yaml
+    • MSSQL       → saved to config/mssql_exclusions.yaml
+    • Athena      → saved to config/athena_exclusions.yaml
+    • EVERY run of that source type — saved permanently
 
   Use this for:
     • CDC / ETL metadata columns   (etl_batch_id, load_ts, dw_insert_dt)
@@ -2559,30 +2598,46 @@ def cmd_add_exclusion(args):
   You can also exclude columns PER TABLE ONLY during the generate workflow.
   {_C.RESET}""")
 
-    # ── Show existing global exclusions ──────────────────────────────────────
-    existing = _load_global_user_exclusions()
-    static   = [c.lower() for c in STATIC_EXCLUDE_COLUMNS]
+    # ── Ask which source database type this exclusion applies to ────────────
+    print(f"  {_C.BOLD}Which source database does this apply to?{_C.RESET}")
+    print(f"    {_C.CYAN}[1]{_C.RESET}  PostgreSQL")
+    print(f"    {_C.CYAN}[2]{_C.RESET}  MSSQL")
+    print(f"    {_C.CYAN}[3]{_C.RESET}  Athena")
+    print(f"    {_C.CYAN}[4]{_C.RESET}  All three")
+    db_choice = input("  Choice [1-4]: ").strip()
+    db_type_map = {"1": ["postgresql"], "2": ["mssql"], "3": ["athena"],
+                   "4": ["postgresql", "mssql", "athena"]}
+    target_db_types = db_type_map.get(db_choice)
+    if not target_db_types:
+        _warn(f"Unknown choice '{db_choice}'. Cancelled.")
+        return
 
-    print(f"  {_C.BOLD}Currently auto-excluded (built-in, {len(static)} columns):{_C.RESET}")
+    static = [c.lower() for c in STATIC_EXCLUDE_COLUMNS]
+    print(f"\n  {_C.BOLD}Currently auto-excluded (built-in, {len(static)} columns):{_C.RESET}")
     for col in STATIC_EXCLUDE_COLUMNS:
         print(f"    {_C.DIM}• {col}{_C.RESET}")
 
-    if existing:
-        print(f"\n  {_C.BOLD}Your saved global exclusions ({len(existing)} columns):{_C.RESET}")
-        import yaml
-        try:
-            with open(_EXCLUSIONS_YAML_PATH, encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-            for entry in data.get("user_global_exclusions", []):
-                col    = entry.get("column_name", "")
-                reason = entry.get("reason", "")
-                added  = entry.get("date_added", "")
-                print(f"    {_C.YELLOW}•{_C.RESET}  {col:<35} {_C.DIM}{reason}  [{added}]{_C.RESET}")
-        except Exception:
-            for col in existing:
-                print(f"    {_C.YELLOW}•{_C.RESET}  {col}")
-    else:
-        print(f"\n  {_C.DIM}No user-defined global exclusions yet.{_C.RESET}")
+    # ── Show existing global exclusions for the chosen source type(s) ───────
+    for db_type in target_db_types:
+        existing = _load_global_user_exclusions(db_type)
+        excl_path = _exclusions_path_for(db_type)
+        label = _DB_TYPE_LABELS.get(db_type, db_type)
+        if existing:
+            print(f"\n  {_C.BOLD}{label} — saved global exclusions ({len(existing)} columns):{_C.RESET}")
+            import yaml
+            try:
+                with open(excl_path, encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+                for entry in data.get("user_global_exclusions", []):
+                    col    = entry.get("column_name", "")
+                    reason = entry.get("reason", "")
+                    added  = entry.get("date_added", "")
+                    print(f"    {_C.YELLOW}•{_C.RESET}  {col:<35} {_C.DIM}{reason}  [{added}]{_C.RESET}")
+            except Exception:
+                for col in existing:
+                    print(f"    {_C.YELLOW}•{_C.RESET}  {col}")
+        else:
+            print(f"\n  {_C.DIM}{label}: no user-defined global exclusions yet.{_C.RESET}")
 
     print()
     _sep()
@@ -2608,7 +2663,8 @@ def cmd_add_exclusion(args):
         reason = "User-defined global exclusion"
 
     # ── Preview ───────────────────────────────────────────────────────────────
-    print(f"\n  {_C.BOLD}Preview — will be excluded from ALL tables, source + target:{_C.RESET}")
+    target_labels = ", ".join(_DB_TYPE_LABELS.get(t, t) for t in target_db_types)
+    print(f"\n  {_C.BOLD}Preview — will be excluded from ALL {target_labels} tables, source + Snowflake target:{_C.RESET}")
     for col in columns:
         print(f"    {_C.YELLOW}•{_C.RESET}  {col}  —  {_C.DIM}{reason}{_C.RESET}")
     print()
@@ -2618,28 +2674,29 @@ def cmd_add_exclusion(args):
         _dim("Cancelled.")
         return
 
-    saved_count   = 0
-    already_count = 0
-    for col in columns:
-        ok = _save_global_user_exclusion(col, reason)
-        if ok:
-            saved_count += 1
-            _ok(f"Saved: '{col}' — will be excluded from all tables globally")
-        else:
-            already_count += 1
-            _dim(f"  Already exists: '{col}' (skipped)")
+    for db_type in target_db_types:
+        excl_path = _exclusions_path_for(db_type)
+        label = _DB_TYPE_LABELS.get(db_type, db_type)
+        saved_count   = 0
+        already_count = 0
+        for col in columns:
+            ok = _save_global_user_exclusion(db_type, col, reason)
+            if ok:
+                saved_count += 1
+                _ok(f"[{label}] Saved: '{col}' — excluded from {label} source + Snowflake target")
+            else:
+                already_count += 1
+                _dim(f"  [{label}] Already exists: '{col}' (skipped)")
 
-    print()
-    if saved_count:
-        _ok(
-            f"{saved_count} global exclusion(s) saved to "
-            f"config/exclusions.yaml → user_global_exclusions"
-        )
-    if already_count:
-        _dim(f"  {already_count} column(s) already excluded — no change.")
+        if saved_count:
+            _ok(
+                f"[{label}] {saved_count} global exclusion(s) saved to "
+                f"config/{excl_path.name} → user_global_exclusions"
+            )
+        if already_count:
+            _dim(f"  [{label}] {already_count} column(s) already excluded — no change.")
 
-    print(f"\n  {_C.DIM}File: {_EXCLUSIONS_YAML_PATH}{_C.RESET}")
-    print(f"  {_C.DIM}These exclusions take effect on the next validation run.{_C.RESET}")
+    print(f"\n  {_C.DIM}These exclusions take effect on the next validation run.{_C.RESET}")
     print()
 
 
@@ -2748,6 +2805,15 @@ def _run_parameterized_tables(args, current_model: str, exclude_cols: list) -> N
         _dim("Cancelled.")
         return
 
+    # ── Layer selection ───────────────────────────────────────────────────────
+    print(f"\n  {_C.BOLD}Select data layer:{_C.RESET}")
+    print(f"    {_C.CYAN}[1]{_C.RESET}  bronze  (default)")
+    print(f"    {_C.CYAN}[2]{_C.RESET}  silver")
+    print(f"    {_C.CYAN}[3]{_C.RESET}  gold")
+    _layer_choice = input("  Layer [1]: ").strip() or "1"
+    _layer = {"1": "bronze", "2": "silver", "3": "gold"}.get(_layer_choice, "bronze")
+    _output_dir = Path(__file__).parent.parent / "Project" / "config" / _layer
+
     # ── Pipeline ──────────────────────────────────────────────────────────────
     src_extractor = _make_source_extractor(rec)
     pipeline   = ValidationPipeline(model=current_model, source_extractor=src_extractor)
@@ -2808,6 +2874,7 @@ def _run_parameterized_tables(args, current_model: str, exclude_cols: list) -> N
                 sf_database=sf_database,
                 pg_database=pg_database,
                 exclude_columns=exclude_cols or None,
+                output_dir=_output_dir,
             )
             results.append((src_table, sf_table, result))
             succeeded += 1
@@ -3171,13 +3238,34 @@ def cmd_multi_db(args):
     pg_database = rec["database"]
 
     # ── D: Select columns to exclude per source table ─────────────────────────
+    # Uses the <db_type>_exclusions.yaml matching this source connection, so
+    # entries there apply to BOTH this source type and the Snowflake target.
+    src_db_type = _normalize_db_type(rec.get("db_type", "postgresql"))
     exclude_raw = getattr(args, "exclude", None) or ""
-    base_exclusions = list(STATIC_EXCLUDE_COLUMNS)
+    base_exclusions = _get_all_exclusions(src_db_type)
     base_exclusions.extend(c.strip() for c in exclude_raw.split(",") if c.strip())
-    table_exclusions = {
-        table: _select_column_exclusions(rec, schema, table, base_exclusions)
-        for table in source_tables
-    }
+    _seen_base = set()
+    _deduped_base = []
+    for c in base_exclusions:
+        cl = c.lower()
+        if cl not in _seen_base:
+            _seen_base.add(cl)
+            _deduped_base.append(c)
+    base_exclusions = _deduped_base
+
+    want_custom_excl = ""
+    if not exclude_raw:
+        want_custom_excl = input(
+            "\n  Do you want to exclude any custom columns? [y/N]: "
+        ).strip().lower()
+
+    if want_custom_excl in ("y", "yes"):
+        table_exclusions = {
+            table: _select_column_exclusions(rec, schema, table, base_exclusions)
+            for table in source_tables
+        }
+    else:
+        table_exclusions = {table: base_exclusions for table in source_tables}
 
     # ── E: Pick Snowflake target database + schema ────────────────────────────
     sf_database = getattr(args, "sf_database", None) or ""
@@ -3268,6 +3356,15 @@ def cmd_multi_db(args):
         _dim("Cancelled.")
         return
 
+    # ── Layer selection ───────────────────────────────────────────────────────
+    print(f"\n  {_C.BOLD}Select data layer:{_C.RESET}")
+    print(f"    {_C.CYAN}[1]{_C.RESET}  bronze  (default)")
+    print(f"    {_C.CYAN}[2]{_C.RESET}  silver")
+    print(f"    {_C.CYAN}[3]{_C.RESET}  gold")
+    _layer_choice = input("  Layer [1]: ").strip() or "1"
+    _layer = {"1": "bronze", "2": "silver", "3": "gold"}.get(_layer_choice, "bronze")
+    _output_dir = Path(__file__).parent.parent / "Project" / "config" / _layer
+
     # ── G: Pipeline loop ──────────────────────────────────────────────────────
     src_extractor = _make_source_extractor(rec)
     pipeline  = ValidationPipeline(model=current_model, source_extractor=src_extractor)
@@ -3293,6 +3390,7 @@ def cmd_multi_db(args):
                 sf_database=sf_database,
                 pg_database=pg_database,
                 exclude_columns=table_exclusions.get(src_table) or None,
+                output_dir=_output_dir,
             )
             results.append((src_table, sf_table, result))
             succeeded += 1
@@ -3344,349 +3442,6 @@ def _blank():
 # ─────────────────────────────────────────────────────────────────────────────
 # COMMAND: profiles  — manage saved connection profiles
 # ─────────────────────────────────────────────────────────────────────────────
-
-def cmd_execute_yaml(args):
-    """
-    Execute YAML Validation Runner  (menu [9])
-    ───────────────────────────────────────────
-    Loads a saved validation YAML from config/bronze/, runs both source and
-    target queries against live databases, and shows a side-by-side pass/fail
-    comparison.
-
-    Flow:
-      1. Pick a YAML file (count_validation or data_validation)
-      2. Pick which table block to run
-      3. Pick credentials — active env, or load from a saved profile
-      4. Run source query (PostgreSQL / MSSQL)
-      5. Run target query (Snowflake)
-      6. Compare results and print pass/fail
-    """
-    import yaml
-
-    _banner()
-    _head("▶  EXECUTE YAML VALIDATION")
-
-    # ── Step 1: discover YAML files ───────────────────────────────────────────
-    bronze_dir = _SRC_DIR.parent / "config" / "bronze"
-    yaml_files = sorted(
-        list((bronze_dir / "count_validation").glob("*.yaml"))
-        + list((bronze_dir / "data_validation").glob("*.yaml"))
-    )
-
-    if not yaml_files:
-        _warn(f"No YAML files found under {bronze_dir}")
-        _dim("Generate one first using menu [1] or [2].")
-        return
-
-    print(f"\n  {_C.BOLD}Available YAML files:{_C.RESET}\n")
-    for i, p in enumerate(yaml_files, 1):
-        folder = p.parent.name
-        tag = f"{_C.CYAN}[count]{_C.RESET}" if "count" in folder else f"{_C.GREEN}[data] {_C.RESET}"
-        print(f"    {_C.CYAN}[{i}]{_C.RESET}  {tag}  {p.name}")
-    print()
-
-    raw = input(f"  Select file number [1–{len(yaml_files)}]: ").strip()
-    try:
-        idx = int(raw)
-        if not (1 <= idx <= len(yaml_files)):
-            _err("Invalid selection.")
-            return
-    except ValueError:
-        _err("Please enter a number.")
-        return
-
-    chosen_yaml = yaml_files[idx - 1]
-    _ok(f"Loaded: {chosen_yaml}")
-
-    try:
-        with open(chosen_yaml, encoding="utf-8") as fh:
-            config = yaml.safe_load(fh)
-    except Exception as exc:
-        _err(f"Failed to parse YAML: {exc}")
-        return
-
-    tables_cfg = config.get("tables", {})
-    if not tables_cfg:
-        _err("No 'tables:' block found in this YAML.")
-        return
-
-    table_names = list(tables_cfg.keys())
-
-    # ── Step 2: pick which table block ───────────────────────────────────────
-    print(f"\n  {_C.BOLD}Tables in this file:{_C.RESET}\n")
-    for i, t in enumerate(table_names, 1):
-        print(f"    {_C.CYAN}[{i}]{_C.RESET}  {t}")
-    print(f"    {_C.DIM}[0]  Run ALL tables{_C.RESET}")
-    print()
-
-    raw2 = input(f"  Select table (0 = all, 1–{len(table_names)}): ").strip()
-    try:
-        t_idx = int(raw2)
-        if t_idx == 0:
-            selected_tables = table_names
-        elif 1 <= t_idx <= len(table_names):
-            selected_tables = [table_names[t_idx - 1]]
-        else:
-            _err("Invalid selection.")
-            return
-    except ValueError:
-        _err("Please enter a number.")
-        return
-
-    # ── Step 3: credentials — always from .env ───────────────────────────────
-    _dim("Using .env credentials.")
-    src_type = os.getenv("SOURCE_TYPE", "postgresql")
-    src_host = os.getenv("SOURCE_HOST", "localhost")
-    src_port = int(os.getenv("SOURCE_PORT", "5432"))
-    src_db = os.getenv("SOURCE_DATABASE", "")
-    src_user = os.getenv("SOURCE_USERNAME", "")
-    src_pass = os.getenv("SOURCE_PASSWORD", "")
-    src_schema = os.getenv("SOURCE_SCHEMA", "public")
-    sf_account = os.getenv("SNOWFLAKE_ACCOUNT", "")
-    sf_db = os.getenv("SNOWFLAKE_DATABASE", "")
-    sf_user = os.getenv("SNOWFLAKE_USERNAME", "")
-    sf_pass = os.getenv("SNOWFLAKE_PASSWORD", "")
-    sf_wh = os.getenv("SNOWFLAKE_WAREHOUSE", "")
-    sf_role = os.getenv("SNOWFLAKE_ROLE", "")
-    mssql_auth = os.getenv("MSSQL_AUTH", "")
-
-    metadata = _apply_database_registry({"prefix": "SRC_1_", "index": 1})
-    src_db = src_db or metadata.get("database", "")
-    src_schema = src_schema or metadata.get("schema", "public")
-    sf_metadata = _apply_database_registry({"prefix": "SNOWFLAKE_", "index": "SNOWFLAKE"})
-    sf_db = sf_db or sf_metadata.get("database", "")
-    sf_schema = os.getenv("SNOWFLAKE_SCHEMA", "") or sf_metadata.get("schema", "")
-
-    current_source = {
-        "type": src_type,
-        "host": src_host,
-        "port": src_port,
-        "database": src_db,
-        "username": src_user,
-        "password": src_pass,
-        "schema": src_schema,
-        "auth": mssql_auth,
-    }
-
-    # ── Step 4: pick validation type to run ──────────────────────────────────
-    # Discover all validation block names from the first table entry
-    first_table_cfg = tables_cfg[selected_tables[0]]
-    all_validations = list(first_table_cfg.get("validations", {}).keys())
-
-    val_choice = None
-    if len(all_validations) > 1:
-        print(f"\n  {_C.BOLD}Validation blocks available:{_C.RESET}\n")
-        print(f"    {_C.CYAN}[0]{_C.RESET}  Run ALL blocks")
-        for i, v in enumerate(all_validations, 1):
-            print(f"    {_C.CYAN}[{i}]{_C.RESET}  {v}")
-        print()
-        raw4 = input(f"  Select validation [0–{len(all_validations)}]: ").strip()
-        try:
-            v_idx = int(raw4)
-            if v_idx == 0:
-                val_choice = None  # all
-            elif 1 <= v_idx <= len(all_validations):
-                val_choice = all_validations[v_idx - 1]
-        except ValueError:
-            pass
-    elif all_validations:
-        val_choice = all_validations[0]
-
-    # ── Step 5 & 6: execute queries and compare ───────────────────────────────
-    print()
-    _sep()
-    total_passed = 0
-    total_failed = 0
-    total_errors = 0
-
-    for table_name in selected_tables:
-        tbl_cfg = tables_cfg.get(table_name, {})
-        validations = tbl_cfg.get("validations", {})
-        blocks_to_run = (
-            {val_choice: validations[val_choice]}
-            if val_choice and val_choice in validations
-            else validations
-        )
-
-        print(f"\n  {_C.BOLD}{_C.CYAN}▶  {table_name}{_C.RESET}")
-
-        for vname, vdata in blocks_to_run.items():
-            src_sql = vdata.get("sourcequery", "").strip()
-            tgt_sql = vdata.get("targetquery", "").strip()
-            src_label = vdata.get("source", "source")
-            tgt_label = vdata.get("target", "snowflake")
-
-            # A single YAML may contain PostgreSQL and MSSQL blocks. Resolve
-            # the source independently for each block instead of reusing the
-            # connection selected for the first block.
-            block_source = _resolve_yaml_source(src_label, current_source)
-            src_type = block_source["type"]
-            src_host = block_source["host"]
-            src_port = int(block_source["port"])
-            src_db = block_source["database"]
-            src_user = block_source["username"]
-            src_pass = block_source["password"]
-            src_schema = block_source["schema"]
-            mssql_auth = block_source["auth"]
-
-            print(f"\n    {_C.DIM}── {vname} ─────────────────────────────────────────{_C.RESET}")
-
-            # Run source query
-            src_result = None
-            src_error  = None
-            src_columns = []
-            try:
-                src_type_norm = _normalize_db_type(src_type)
-                if src_type_norm == "mssql":
-                    import pyodbc
-                    driver  = os.getenv("MSSQL_DRIVER", "ODBC Driver 18 for SQL Server")
-                    cs_base = (f"DRIVER={{{driver}}};SERVER={src_host},{src_port};"
-                               f"DATABASE={src_db};TrustServerCertificate=yes;Encrypt=optional;")
-                    if mssql_auth.lower() in ("windows", "win"):
-                        cs = cs_base + "Trusted_Connection=yes;"
-                    else:
-                        cs = cs_base + f"UID={src_user};PWD={src_pass};"
-                    conn = pyodbc.connect(cs, timeout=30)
-                    cur = conn.cursor()
-                    cur.execute(src_sql)
-                    src_columns = [description[0] for description in cur.description or []]
-                    rows = cur.fetchall()
-                    conn.close()
-                    src_result = rows
-                else:
-                    import psycopg2
-                    conn = psycopg2.connect(
-                        host=src_host, port=src_port, database=src_db,
-                        user=src_user, password=src_pass, connect_timeout=30,
-                    )
-                    cur = conn.cursor()
-                    cur.execute(src_sql)
-                    src_columns = [description[0] for description in cur.description or []]
-                    rows = cur.fetchall()
-                    conn.close()
-                    src_result = rows
-            except Exception as exc:
-                src_error = str(exc)
-
-            # Run target Snowflake query
-            tgt_result = None
-            tgt_error  = None
-            tgt_columns = []
-            try:
-                import snowflake.connector
-                sf_params = dict(account=sf_account, user=sf_user, password=sf_pass,
-                                 database=sf_db, login_timeout=30)
-                if sf_wh:
-                    sf_params["warehouse"] = sf_wh
-                if sf_role:
-                    sf_params["role"] = sf_role
-                sf_conn = snowflake.connector.connect(**sf_params)
-                sf_cur  = sf_conn.cursor()
-                sf_cur.execute(tgt_sql)
-                tgt_columns = [description[0] for description in sf_cur.description or []]
-                rows = sf_cur.fetchall()
-                sf_conn.close()
-                tgt_result = rows
-            except Exception as exc:
-                tgt_error = str(exc)
-
-            # ── Display results ───────────────────────────────────────────────
-            def _fmt_result(rows, error):
-                if error:
-                    return f"{_C.RED}ERROR{_C.RESET}", error[:80]
-                if rows is None:
-                    return f"{_C.YELLOW}NO DATA{_C.RESET}", ""
-                if len(rows) == 1 and len(rows[0]) == 1:
-                    return f"{_C.GREEN}{rows[0][0]}{_C.RESET}", ""
-                return f"{_C.GREEN}{len(rows)} rows{_C.RESET}", ""
-
-            src_val, src_note = _fmt_result(src_result, src_error)
-            tgt_val, tgt_note = _fmt_result(tgt_result, tgt_error)
-
-            print(f"      {_C.BOLD}Source{_C.RESET}  ({src_label}) : {src_val}"
-                  + (f"  {_C.DIM}{src_note}{_C.RESET}" if src_note else ""))
-            print(f"      {_C.BOLD}Target{_C.RESET}  ({tgt_label}) : {tgt_val}"
-                  + (f"  {_C.DIM}{tgt_note}{_C.RESET}" if tgt_note else ""))
-
-            # Pass/fail logic for count validations (single numeric result)
-            if src_error or tgt_error:
-                total_errors += 1
-                status = f"{_C.RED}✗ ERROR{_C.RESET}"
-            elif (src_result and len(src_result) == 1 and len(src_result[0]) == 1
-                  and tgt_result and len(tgt_result) == 1 and len(tgt_result[0]) == 1):
-                sv = src_result[0][0]
-                tv = tgt_result[0][0]
-                if sv == tv:
-                    total_passed += 1
-                    status = f"{_C.GREEN}✓ PASS{_C.RESET}  (source={sv}, target={tv})"
-                else:
-                    total_failed += 1
-                    diff = abs(int(tv or 0) - int(sv or 0)) if sv is not None and tv is not None else "?"
-                    status = f"{_C.RED}✗ FAIL{_C.RESET}  (source={sv}, target={tv}, diff={diff})"
-            else:
-                # Database engines do not guarantee row order without ORDER BY.
-                # Compare normalized data validations in a deterministic order.
-                def _canonical_row(row, columns):
-                    return tuple(
-                        _canonical_validation_value(name, value)
-                        for name, value in zip(columns, row)
-                    )
-
-                comparable_source = sorted(
-                    (_canonical_row(row, src_columns) for row in src_result),
-                    key=str,
-                ) if src_result else []
-                comparable_target = sorted(
-                    (_canonical_row(row, tgt_columns) for row in tgt_result),
-                    key=str,
-                ) if tgt_result else []
-                row_match = (comparable_source == comparable_target) if (src_result is not None and tgt_result is not None) else False
-                if row_match:
-                    total_passed += 1
-                    status = f"{_C.GREEN}✓ PASS{_C.RESET}  ({len(comparable_source)} rows match, order-independent)"
-                elif src_result and tgt_result:
-                    total_failed += 1
-                    mismatch_note = ""
-                    if vname.lower() == "data_validation" and src_columns and tgt_columns:
-                        source_by_key = {str(row[0]): row for row in src_result}
-                        target_by_key = {str(row[0]): row for row in tgt_result}
-                        mismatches = []
-                        for key in sorted(set(source_by_key) | set(target_by_key)):
-                            source_row = source_by_key.get(key)
-                            target_row = target_by_key.get(key)
-                            if source_row is None or target_row is None:
-                                mismatches.append(f"key={key}: missing on {'source' if source_row is None else 'target'}")
-                                continue
-                            differences = [
-                                name for name, source_value, target_value in zip(
-                                    src_columns, source_row, target_row
-                                ) if _canonical_validation_value(name, source_value)
-                                != _canonical_validation_value(name, target_value)
-                            ]
-                            if differences:
-                                mismatches.append(f"key={key}: {', '.join(differences[:4])}")
-                        if mismatches:
-                            mismatch_note = f"; mismatches={len(mismatches)} ({' | '.join(mismatches[:3])})"
-                    status = f"{_C.RED}✗ FAIL{_C.RESET}  (source={len(src_result)} rows, target={len(tgt_result)} rows{mismatch_note})"
-                else:
-                    total_errors += 1
-                    status = f"{_C.YELLOW}? SKIP{_C.RESET}  (no data to compare)"
-
-            print(f"      {_C.BOLD}Result{_C.RESET}          : {status}")
-
-    # ── Summary ───────────────────────────────────────────────────────────────
-    print()
-    _sep()
-    print(f"\n  {_C.BOLD}SUMMARY{_C.RESET}")
-    print(f"    {_C.GREEN}✓ Passed  : {total_passed}{_C.RESET}")
-    if total_failed:
-        print(f"    {_C.RED}✗ Failed  : {total_failed}{_C.RESET}")
-    if total_errors:
-        print(f"    {_C.YELLOW}⚠ Errors  : {total_errors}{_C.RESET}")
-    overall = total_passed + total_failed + total_errors
-    print(f"    Total     : {overall} check(s) run")
-    print()
-
 
 def cmd_profiles(args):
     """
