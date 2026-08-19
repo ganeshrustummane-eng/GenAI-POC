@@ -163,20 +163,38 @@ STATIC_EXCLUDE_COLUMNS: list = [
     "_fivetran_active",
 ]
 
-_EXCLUSIONS_YAML_PATH = _SRC_DIR.parent / "config" / "exclusions.yaml"
+_EXCLUSIONS_DIR = _SRC_DIR.parent / "config"
+
+# One exclusions file per SOURCE database type. Whatever is listed in a given
+# file is excluded from BOTH that source type AND the Snowflake target — e.g.
+# everything in postgresql_exclusions.yaml applies to PostgreSQL source columns
+# and their Snowflake counterparts, regardless of which PostgreSQL database/table.
+_EXCLUSION_FILE_BY_DB_TYPE = {
+    "postgresql": _EXCLUSIONS_DIR / "postgresql_exclusions.yaml",
+    "mssql":      _EXCLUSIONS_DIR / "mssql_exclusions.yaml",
+    "athena":     _EXCLUSIONS_DIR / "athena_exclusions.yaml",
+}
 
 
-def _load_global_user_exclusions() -> list:
+def _exclusions_path_for(db_type: str) -> Path:
+    """Resolve the exclusions YAML file for a given SOURCE database type."""
+    key = _normalize_db_type(db_type or "postgresql")
+    return _EXCLUSION_FILE_BY_DB_TYPE.get(key, _EXCLUSION_FILE_BY_DB_TYPE["postgresql"])
+
+
+def _load_global_user_exclusions(db_type: str) -> list:
     """
-    Load user-defined global column exclusions from config/exclusions.yaml.
-    Returns a list of lowercase column names that should be excluded
-    from ALL tables in BOTH source and target, regardless of database.
+    Load user-defined global column exclusions from the exclusions YAML file
+    that corresponds to `db_type` (postgresql/mssql/athena).
+    Returns a list of lowercase column names that should be excluded from
+    ALL tables of that source type, in BOTH source and Snowflake target.
     """
     import yaml
+    path = _exclusions_path_for(db_type)
     try:
-        if not _EXCLUSIONS_YAML_PATH.exists():
+        if not path.exists():
             return []
-        with open(_EXCLUSIONS_YAML_PATH, encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         entries = data.get("user_global_exclusions", [])
         if not isinstance(entries, list):
@@ -190,18 +208,20 @@ def _load_global_user_exclusions() -> list:
         return []
 
 
-def _save_global_user_exclusion(column_name: str, reason: str, added_by: str = "") -> bool:
+def _save_global_user_exclusion(db_type: str, column_name: str, reason: str, added_by: str = "") -> bool:
     """
-    Append a new global column exclusion to config/exclusions.yaml.
-    The column will be excluded from ALL tables in source AND target.
+    Append a new global column exclusion to the exclusions YAML file for
+    `db_type` (postgresql/mssql/athena). The column will be excluded from
+    every table of that source type AND the Snowflake target.
     Returns True on success.
     """
     import yaml
     import datetime
+    path = _exclusions_path_for(db_type)
     try:
         data = {}
-        if _EXCLUSIONS_YAML_PATH.exists():
-            with open(_EXCLUSIONS_YAML_PATH, encoding="utf-8") as f:
+        if path.exists():
+            with open(path, encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
 
         if "user_global_exclusions" not in data:
@@ -224,22 +244,23 @@ def _save_global_user_exclusion(column_name: str, reason: str, added_by: str = "
             "date_added":   datetime.date.today().isoformat(),
         })
 
-        _EXCLUSIONS_YAML_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(_EXCLUSIONS_YAML_PATH, "w", encoding="utf-8") as f:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
             yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
         return True
     except Exception:
         return False
 
 
-def _get_all_exclusions() -> list:
+def _get_all_exclusions(db_type: str) -> list:
     """
-    Return merged list of all globally excluded column names (lowercase).
-    Combines: STATIC_EXCLUDE_COLUMNS + user_global_exclusions from exclusions.yaml.
-    Applied to BOTH source and target, across ALL databases.
+    Return merged list of all globally excluded column names (lowercase) for
+    `db_type` (postgresql/mssql/athena). Combines: STATIC_EXCLUDE_COLUMNS +
+    user_global_exclusions from that source type's exclusions YAML file.
+    Applied to BOTH that source type and the Snowflake target.
     """
     static = [c.lower() for c in STATIC_EXCLUDE_COLUMNS]
-    user   = _load_global_user_exclusions()
+    user   = _load_global_user_exclusions(db_type)
     seen   = set()
     merged = []
     for c in static + user:
@@ -719,10 +740,14 @@ def cmd_generate(args):
         current_model = os.getenv("DIAL_MODEL", "gpt-4o")
     rec = None  # set when user picks a source connection interactively
 
-    # Parse --exclude  →  merge user list with ALL global exclusions (static + saved)
+    # Parse --exclude  →  merge user list with ALL global exclusions (static + saved).
+    # The source database type isn't known yet (connection not picked), so this
+    # uses the PostgreSQL exclusions file as a placeholder default; it is
+    # recomputed below with the correct per-source-type file once the source
+    # connection (and its db_type) has been resolved.
     exclude_raw  = getattr(args, "exclude", None) or ""
     user_exclude = [c.strip().lower() for c in exclude_raw.split(",") if c.strip()] if exclude_raw else []
-    all_global   = _get_all_exclusions()   # static + user_global_exclusions from exclusions.yaml
+    all_global   = _get_all_exclusions("postgresql")
     seen = set()
     exclude_cols = []
     for c in all_global + user_exclude:
@@ -820,6 +845,18 @@ def cmd_generate(args):
         else:
             sf_schema   = sf_schema   or os.getenv("SNOWFLAKE_SCHEMA",   "")
             sf_database = sf_database or os.getenv("SNOWFLAKE_DATABASE", "")
+
+    # Recompute global exclusions now that the source connection (and its
+    # db_type) is known, so the correct <db_type>_exclusions.yaml is used —
+    # its entries apply to BOTH this source and the Snowflake target.
+    _src_db_type = _normalize_db_type(rec["db_type"]) if rec else _normalize_db_type(os.getenv("SOURCE_TYPE", "postgresql"))
+    _all_global  = _get_all_exclusions(_src_db_type)
+    _seen = set()
+    exclude_cols = []
+    for c in _all_global + user_exclude:
+        if c not in _seen:
+            _seen.add(c)
+            exclude_cols.append(c)
 
     if not getattr(args, "exclude", None):
         want_custom_excl = input(
@@ -1635,9 +1672,11 @@ def cmd_interactive():
     print(_env_status_block())
     print(f"\n  {_C.DIM}Rule Book : {stats['base_rules']} base + {stats['learned_rules']} learned = {stats['total_rules']} total rules{_C.RESET}")
 
-    # Badge: count user global exclusions for display in menu
-    user_excl    = _load_global_user_exclusions()
-    excl_badge   = f"  {_C.DIM}({len(user_excl)} saved){_C.RESET}" if user_excl else ""
+    # Badge: count user global exclusions across all 3 source-type files
+    user_excl_count = sum(
+        len(_load_global_user_exclusions(t)) for t in ("postgresql", "mssql", "athena")
+    )
+    excl_badge   = f"  {_C.DIM}({user_excl_count} saved){_C.RESET}" if user_excl_count else ""
 
     # Badge: show current AI model and key status
     # IMPORTANT: Claude backend uses CLAUDE_MODEL, not DIAL_MODEL
@@ -2147,16 +2186,19 @@ def _select_column_exclusions(rec: dict, schema: str, table: str, initial=None) 
     """
     Interactive column exclusion prompt — two options:
 
-      Option G — GLOBAL: exclude this column from ALL tables, BOTH source and
-                 target, regardless of database. Saved permanently to
-                 config/exclusions.yaml under user_global_exclusions.
+      Option G — GLOBAL: exclude this column from ALL tables of THIS SOURCE
+                 DATABASE TYPE, in both that source and the Snowflake target.
+                 Saved permanently to config/<db_type>_exclusions.yaml under
+                 user_global_exclusions.
 
       Option T — TABLE-ONLY: exclude column only for this specific table run.
                  Not saved anywhere; applies to current session only.
 
     Shows every column in the table with auto-excluded columns marked [auto].
     """
-    all_excluded = _get_all_exclusions()      # static + user global
+    src_db_type  = _normalize_db_type((rec or {}).get("db_type", "postgresql"))
+    excl_path    = _exclusions_path_for(src_db_type)
+    all_excluded = _get_all_exclusions(src_db_type)      # static + user global for this source type
     selected     = list(initial or [])
 
     # Fetch live columns from source
@@ -2192,8 +2234,8 @@ def _select_column_exclusions(rec: dict, schema: str, table: str, initial=None) 
 
     # ── Show exclusion options ────────────────────────────────────────────────
     print(f"\n  {_C.BOLD}Exclusion Options:{_C.RESET}")
-    print(f"    {_C.GREEN}[G]{_C.RESET}  Global  — exclude column(s) from ALL tables, source & target")
-    print(f"              Saved permanently to config/exclusions.yaml")
+    print(f"    {_C.GREEN}[G]{_C.RESET}  Global  — exclude column(s) from ALL {_DB_TYPE_LABELS.get(src_db_type, src_db_type)} tables, source & Snowflake target")
+    print(f"              Saved permanently to config/{excl_path.name}")
     print(f"    {_C.CYAN}[T]{_C.RESET}  Table   — exclude column(s) for THIS table only (this run)")
     print(f"    {_C.DIM}[N]{_C.RESET}  None    — no additional exclusions (just keep [auto] ones)")
     print()
@@ -2255,7 +2297,7 @@ def _select_column_exclusions(rec: dict, schema: str, table: str, initial=None) 
         saved   = []
         skipped = []
         for col in new_cols:
-            ok = _save_global_user_exclusion(col, reason)
+            ok = _save_global_user_exclusion(src_db_type, col, reason)
             if ok:
                 saved.append(col)
                 selected.append(col)
@@ -2266,7 +2308,8 @@ def _select_column_exclusions(rec: dict, schema: str, table: str, initial=None) 
         if saved:
             _ok(
                 f"Saved {len(saved)} global exclusion(s) to "
-                f"config/exclusions.yaml → user_global_exclusions"
+                f"config/{excl_path.name} → user_global_exclusions "
+                f"(applies to {_DB_TYPE_LABELS.get(src_db_type, src_db_type)} source + Snowflake target)"
             )
             for col in saved:
                 print(f"    {_C.GREEN}✓{_C.RESET}  {col}  ({reason})")
@@ -2538,10 +2581,12 @@ def cmd_add_exclusion(args):
 
     print(f"""
   {_C.BOLD}What is a Global Exclusion?{_C.RESET}
-  {_C.DIM}A column added here is excluded from validation in:
-    • ALL source tables  (PostgreSQL / MSSQL / Athena — any database)
-    • ALL target tables  (Snowflake)
-    • EVERY run          (saved permanently to config/exclusions.yaml)
+  {_C.DIM}A column added here is excluded from validation for ONE source
+  database type, in BOTH that source and the Snowflake target:
+    • PostgreSQL  → saved to config/postgresql_exclusions.yaml
+    • MSSQL       → saved to config/mssql_exclusions.yaml
+    • Athena      → saved to config/athena_exclusions.yaml
+    • EVERY run of that source type — saved permanently
 
   Use this for:
     • CDC / ETL metadata columns   (etl_batch_id, load_ts, dw_insert_dt)
@@ -2553,30 +2598,46 @@ def cmd_add_exclusion(args):
   You can also exclude columns PER TABLE ONLY during the generate workflow.
   {_C.RESET}""")
 
-    # ── Show existing global exclusions ──────────────────────────────────────
-    existing = _load_global_user_exclusions()
-    static   = [c.lower() for c in STATIC_EXCLUDE_COLUMNS]
+    # ── Ask which source database type this exclusion applies to ────────────
+    print(f"  {_C.BOLD}Which source database does this apply to?{_C.RESET}")
+    print(f"    {_C.CYAN}[1]{_C.RESET}  PostgreSQL")
+    print(f"    {_C.CYAN}[2]{_C.RESET}  MSSQL")
+    print(f"    {_C.CYAN}[3]{_C.RESET}  Athena")
+    print(f"    {_C.CYAN}[4]{_C.RESET}  All three")
+    db_choice = input("  Choice [1-4]: ").strip()
+    db_type_map = {"1": ["postgresql"], "2": ["mssql"], "3": ["athena"],
+                   "4": ["postgresql", "mssql", "athena"]}
+    target_db_types = db_type_map.get(db_choice)
+    if not target_db_types:
+        _warn(f"Unknown choice '{db_choice}'. Cancelled.")
+        return
 
-    print(f"  {_C.BOLD}Currently auto-excluded (built-in, {len(static)} columns):{_C.RESET}")
+    static = [c.lower() for c in STATIC_EXCLUDE_COLUMNS]
+    print(f"\n  {_C.BOLD}Currently auto-excluded (built-in, {len(static)} columns):{_C.RESET}")
     for col in STATIC_EXCLUDE_COLUMNS:
         print(f"    {_C.DIM}• {col}{_C.RESET}")
 
-    if existing:
-        print(f"\n  {_C.BOLD}Your saved global exclusions ({len(existing)} columns):{_C.RESET}")
-        import yaml
-        try:
-            with open(_EXCLUSIONS_YAML_PATH, encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-            for entry in data.get("user_global_exclusions", []):
-                col    = entry.get("column_name", "")
-                reason = entry.get("reason", "")
-                added  = entry.get("date_added", "")
-                print(f"    {_C.YELLOW}•{_C.RESET}  {col:<35} {_C.DIM}{reason}  [{added}]{_C.RESET}")
-        except Exception:
-            for col in existing:
-                print(f"    {_C.YELLOW}•{_C.RESET}  {col}")
-    else:
-        print(f"\n  {_C.DIM}No user-defined global exclusions yet.{_C.RESET}")
+    # ── Show existing global exclusions for the chosen source type(s) ───────
+    for db_type in target_db_types:
+        existing = _load_global_user_exclusions(db_type)
+        excl_path = _exclusions_path_for(db_type)
+        label = _DB_TYPE_LABELS.get(db_type, db_type)
+        if existing:
+            print(f"\n  {_C.BOLD}{label} — saved global exclusions ({len(existing)} columns):{_C.RESET}")
+            import yaml
+            try:
+                with open(excl_path, encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+                for entry in data.get("user_global_exclusions", []):
+                    col    = entry.get("column_name", "")
+                    reason = entry.get("reason", "")
+                    added  = entry.get("date_added", "")
+                    print(f"    {_C.YELLOW}•{_C.RESET}  {col:<35} {_C.DIM}{reason}  [{added}]{_C.RESET}")
+            except Exception:
+                for col in existing:
+                    print(f"    {_C.YELLOW}•{_C.RESET}  {col}")
+        else:
+            print(f"\n  {_C.DIM}{label}: no user-defined global exclusions yet.{_C.RESET}")
 
     print()
     _sep()
@@ -2602,7 +2663,8 @@ def cmd_add_exclusion(args):
         reason = "User-defined global exclusion"
 
     # ── Preview ───────────────────────────────────────────────────────────────
-    print(f"\n  {_C.BOLD}Preview — will be excluded from ALL tables, source + target:{_C.RESET}")
+    target_labels = ", ".join(_DB_TYPE_LABELS.get(t, t) for t in target_db_types)
+    print(f"\n  {_C.BOLD}Preview — will be excluded from ALL {target_labels} tables, source + Snowflake target:{_C.RESET}")
     for col in columns:
         print(f"    {_C.YELLOW}•{_C.RESET}  {col}  —  {_C.DIM}{reason}{_C.RESET}")
     print()
@@ -2612,28 +2674,29 @@ def cmd_add_exclusion(args):
         _dim("Cancelled.")
         return
 
-    saved_count   = 0
-    already_count = 0
-    for col in columns:
-        ok = _save_global_user_exclusion(col, reason)
-        if ok:
-            saved_count += 1
-            _ok(f"Saved: '{col}' — will be excluded from all tables globally")
-        else:
-            already_count += 1
-            _dim(f"  Already exists: '{col}' (skipped)")
+    for db_type in target_db_types:
+        excl_path = _exclusions_path_for(db_type)
+        label = _DB_TYPE_LABELS.get(db_type, db_type)
+        saved_count   = 0
+        already_count = 0
+        for col in columns:
+            ok = _save_global_user_exclusion(db_type, col, reason)
+            if ok:
+                saved_count += 1
+                _ok(f"[{label}] Saved: '{col}' — excluded from {label} source + Snowflake target")
+            else:
+                already_count += 1
+                _dim(f"  [{label}] Already exists: '{col}' (skipped)")
 
-    print()
-    if saved_count:
-        _ok(
-            f"{saved_count} global exclusion(s) saved to "
-            f"config/exclusions.yaml → user_global_exclusions"
-        )
-    if already_count:
-        _dim(f"  {already_count} column(s) already excluded — no change.")
+        if saved_count:
+            _ok(
+                f"[{label}] {saved_count} global exclusion(s) saved to "
+                f"config/{excl_path.name} → user_global_exclusions"
+            )
+        if already_count:
+            _dim(f"  [{label}] {already_count} column(s) already excluded — no change.")
 
-    print(f"\n  {_C.DIM}File: {_EXCLUSIONS_YAML_PATH}{_C.RESET}")
-    print(f"  {_C.DIM}These exclusions take effect on the next validation run.{_C.RESET}")
+    print(f"\n  {_C.DIM}These exclusions take effect on the next validation run.{_C.RESET}")
     print()
 
 
@@ -3175,9 +3238,20 @@ def cmd_multi_db(args):
     pg_database = rec["database"]
 
     # ── D: Select columns to exclude per source table ─────────────────────────
+    # Uses the <db_type>_exclusions.yaml matching this source connection, so
+    # entries there apply to BOTH this source type and the Snowflake target.
+    src_db_type = _normalize_db_type(rec.get("db_type", "postgresql"))
     exclude_raw = getattr(args, "exclude", None) or ""
-    base_exclusions = list(STATIC_EXCLUDE_COLUMNS)
+    base_exclusions = _get_all_exclusions(src_db_type)
     base_exclusions.extend(c.strip() for c in exclude_raw.split(",") if c.strip())
+    _seen_base = set()
+    _deduped_base = []
+    for c in base_exclusions:
+        cl = c.lower()
+        if cl not in _seen_base:
+            _seen_base.add(cl)
+            _deduped_base.append(c)
+    base_exclusions = _deduped_base
 
     want_custom_excl = ""
     if not exclude_raw:

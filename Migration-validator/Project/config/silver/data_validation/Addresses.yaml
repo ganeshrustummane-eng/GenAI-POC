@@ -1,9 +1,9 @@
 # ============================================================
 # Migration Validator — Data Validation Config
 # Table      : Addresses
-# Generated  : 2026-08-19T12:21:25.686554
+# Generated  : 2026-08-19T12:45:48.904958
 # By         : AI (model: gpt-4o)
-# Columns    : 27 comparable columns
+# Columns    : 26 comparable columns
 #
 # Validation blocks (row count is in bronze.yaml):
 #   data_validation           — normalised full-scan SELECT (all columns)
@@ -37,33 +37,32 @@ tables:
         pksourcecolumn: AddressID_normalized
         sourcequery: |
           SELECT 
-              COALESCE(CAST(AddressID AS VARCHAR(MAX)), '<<NULL>>') AS AddressID_normalized,
-              COALESCE(CAST(SiteID AS VARCHAR(MAX)), '<<NULL>>') AS SiteID_normalized,
-              COALESCE(LTRIM(RTRIM(CAST(sMrMrs AS VARCHAR(MAX)))), '<<NULL>>') AS sMrMrs_normalized,
-              COALESCE(LTRIM(RTRIM(CAST(sFName AS VARCHAR(MAX)))), '<<NULL>>') AS sFName_normalized,
-              COALESCE(LTRIM(RTRIM(CAST(sMI AS VARCHAR(MAX)))), '<<NULL>>') AS sMI_normalized,
-              COALESCE(LTRIM(RTRIM(CAST(sLName AS VARCHAR(MAX)))), '<<NULL>>') AS sLName_normalized,
-              COALESCE(LTRIM(RTRIM(CAST(sCompany AS VARCHAR(MAX)))), '<<NULL>>') AS sCompany_normalized,
-              COALESCE(LTRIM(RTRIM(CAST(sAddr1 AS VARCHAR(MAX)))), '<<NULL>>') AS sAddr1_normalized,
-              COALESCE(LTRIM(RTRIM(CAST(sAddr2 AS VARCHAR(MAX)))), '<<NULL>>') AS sAddr2_normalized,
-              COALESCE(LTRIM(RTRIM(CAST(sCity AS VARCHAR(MAX)))), '<<NULL>>') AS sCity_normalized,
-              COALESCE(LTRIM(RTRIM(CAST(sRegion AS VARCHAR(MAX)))), '<<NULL>>') AS sRegion_normalized,
-              COALESCE(LTRIM(RTRIM(CAST(sPostalCode AS VARCHAR(MAX)))), '<<NULL>>') AS sPostalCode_normalized,
-              COALESCE(LTRIM(RTRIM(CAST(sCountry AS VARCHAR(MAX)))), '<<NULL>>') AS sCountry_normalized,
-              COALESCE(LTRIM(RTRIM(CAST(sPhone1 AS VARCHAR(MAX)))), '<<NULL>>') AS sPhone1_normalized,
-              COALESCE(LTRIM(RTRIM(CAST(sPhone2 AS VARCHAR(MAX)))), '<<NULL>>') AS sPhone2_normalized,
-              COALESCE(LTRIM(RTRIM(CAST(sPhone3 AS VARCHAR(MAX)))), '<<NULL>>') AS sPhone3_normalized,
-              COALESCE(LTRIM(RTRIM(CAST(sPhone4 AS VARCHAR(MAX)))), '<<NULL>>') AS sPhone4_normalized,
-              COALESCE(LTRIM(RTRIM(CAST(sPhone5 AS VARCHAR(MAX)))), '<<NULL>>') AS sPhone5_normalized,
-              COALESCE(LTRIM(RTRIM(CAST(sPhone6 AS VARCHAR(MAX)))), '<<NULL>>') AS sPhone6_normalized,
-              COALESCE(CAST(dcLongitude AS VARCHAR(MAX)), '<<NULL>>') AS dcLongitude_normalized,
-              COALESCE(CAST(dcLatitude AS VARCHAR(MAX)), '<<NULL>>') AS dcLatitude_normalized,
-              COALESCE(CASE WHEN bPermanent = 1 THEN '1' WHEN bPermanent = 0 THEN '0' ELSE NULL END, '<<NULL>>') AS bPermanent_normalized,
-              COALESCE(FORMAT(dDeleted, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') AS dDeleted_normalized,
-              COALESCE(FORMAT(dUpdated, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') AS dUpdated_normalized,
-              COALESCE(FORMAT(dArchived, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') AS dArchived_normalized,
-              COALESCE(CAST(uTS AS VARCHAR(MAX)), '<<NULL>>') AS uTS_normalized,
-              COALESCE(CAST(OldPK AS VARCHAR(MAX)), '<<NULL>>') AS OldPK_normalized
+            COALESCE(CAST(AddressID AS VARCHAR(MAX)), '<<NULL>>') AS AddressID_normalized,
+            COALESCE(CAST(SiteID AS VARCHAR(MAX)), '<<NULL>>') AS SiteID_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sMrMrs AS VARCHAR(MAX)))), '<<NULL>>') AS sMrMrs_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sFName AS VARCHAR(MAX)))), '<<NULL>>') AS sFName_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sMI AS VARCHAR(MAX)))), '<<NULL>>') AS sMI_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sLName AS VARCHAR(MAX)))), '<<NULL>>') AS sLName_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sCompany AS VARCHAR(MAX)))), '<<NULL>>') AS sCompany_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sAddr1 AS VARCHAR(MAX)))), '<<NULL>>') AS sAddr1_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sAddr2 AS VARCHAR(MAX)))), '<<NULL>>') AS sAddr2_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sCity AS VARCHAR(MAX)))), '<<NULL>>') AS sCity_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sRegion AS VARCHAR(MAX)))), '<<NULL>>') AS sRegion_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sPostalCode AS VARCHAR(MAX)))), '<<NULL>>') AS sPostalCode_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sCountry AS VARCHAR(MAX)))), '<<NULL>>') AS sCountry_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sPhone1 AS VARCHAR(MAX)))), '<<NULL>>') AS sPhone1_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sPhone2 AS VARCHAR(MAX)))), '<<NULL>>') AS sPhone2_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sPhone3 AS VARCHAR(MAX)))), '<<NULL>>') AS sPhone3_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sPhone4 AS VARCHAR(MAX)))), '<<NULL>>') AS sPhone4_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sPhone5 AS VARCHAR(MAX)))), '<<NULL>>') AS sPhone5_normalized,
+            COALESCE(LTRIM(RTRIM(CAST(sPhone6 AS VARCHAR(MAX)))), '<<NULL>>') AS sPhone6_normalized,
+            COALESCE(CAST(dcLongitude AS VARCHAR(MAX)), '<<NULL>>') AS dcLongitude_normalized,
+            COALESCE(CAST(dcLatitude AS VARCHAR(MAX)), '<<NULL>>') AS dcLatitude_normalized,
+            COALESCE(CASE WHEN bPermanent = 1 THEN '1' WHEN bPermanent = 0 THEN '0' ELSE NULL END, '<<NULL>>') AS bPermanent_normalized,
+            COALESCE(FORMAT(dDeleted, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') AS dDeleted_normalized,
+            COALESCE(FORMAT(dUpdated, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') AS dUpdated_normalized,
+            COALESCE(FORMAT(dArchived, 'yyyy-MM-dd HH:mm:ss'), '<<NULL>>') AS dArchived_normalized,
+            COALESCE(CAST(OldPK AS VARCHAR(MAX)), '<<NULL>>') AS OldPK_normalized
           FROM dbo.Addresses;
         target_table_name: ADDRESSES
         target: snowflake
@@ -102,7 +101,6 @@ tables:
               COALESCE(TO_VARCHAR(DDELETED, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "dDeleted_normalized",
               COALESCE(TO_VARCHAR(DUPDATED, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "dUpdated_normalized",
               COALESCE(TO_VARCHAR(DARCHIVED, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "dArchived_normalized",
-              COALESCE(CAST(UTS AS STRING), '<<NULL>>') AS "uTS_normalized",
               COALESCE(CAST(OLDPK AS STRING), '<<NULL>>') AS "OldPK_normalized"
           FROM DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.ADDRESSES
           WHERE _FIVETRAN_ACTIVE = TRUE;
