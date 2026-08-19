@@ -154,7 +154,6 @@ def _normalize_db_type(raw: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 STATIC_EXCLUDE_COLUMNS: list = [
-    # Fivetran metadata
     "_fivetran_synced",
     "_fivetran_deleted",
     "_fivetran_id",
@@ -162,21 +161,6 @@ STATIC_EXCLUDE_COLUMNS: list = [
     "_fivetran_start",
     "_fivetran_end",
     "_fivetran_active",
-    # Common audit / CDC columns injected at load time
-    "etl_insert_dt",
-    "etl_update_dt",
-    "etl_batch_id",
-    "dw_insert_dt",
-    "dw_update_dt",
-    "dw_batch_id",
-    "load_dt",
-    "load_ts",
-    "created_at_dw",
-    "updated_at_dw",
-    "record_source",
-    "hash_diff",
-    "dv_load_dt",
-    "dv_record_source",
 ]
 
 _EXCLUSIONS_YAML_PATH = _SRC_DIR.parent / "config" / "exclusions.yaml"
@@ -838,7 +822,11 @@ def cmd_generate(args):
             sf_database = sf_database or os.getenv("SNOWFLAKE_DATABASE", "")
 
     if not getattr(args, "exclude", None):
-        exclude_cols = _select_column_exclusions(rec, pg_schema, pg_table, exclude_cols)
+        want_custom_excl = input(
+            "\n  Do you want to exclude any custom columns? [y/N]: "
+        ).strip().lower()
+        if want_custom_excl in ("y", "yes"):
+            exclude_cols = _select_column_exclusions(rec, pg_schema, pg_table, exclude_cols)
 
     # ── Config summary — detect active backend correctly ────────────────────
     _dial_key_chk   = os.getenv("DIAL_API_KEY", "")
@@ -888,6 +876,15 @@ def cmd_generate(args):
         _dim("Cancelled.")
         return
 
+    # ── Layer selection ───────────────────────────────────────────────────────
+    print(f"\n  {_C.BOLD}Select data layer:{_C.RESET}")
+    print(f"    {_C.CYAN}[1]{_C.RESET}  bronze  (default)")
+    print(f"    {_C.CYAN}[2]{_C.RESET}  silver")
+    print(f"    {_C.CYAN}[3]{_C.RESET}  gold")
+    _layer_choice = input("  Layer [1]: ").strip() or "1"
+    _layer = {"1": "bronze", "2": "silver", "3": "gold"}.get(_layer_choice, "bronze")
+    _output_dir = Path(__file__).parent.parent / "Project" / "config" / _layer
+
     # ── Run pipeline ──────────────────────────────────────────────────────────
     print()
     try:
@@ -901,6 +898,7 @@ def cmd_generate(args):
             sf_database=sf_database,
             pg_database=pg_database,
             exclude_columns=exclude_cols or None,
+            output_dir=_output_dir,
         )
         _show_output_summary(result, pg_database=pg_database)
 
@@ -1679,8 +1677,6 @@ def cmd_interactive():
     {_C.CYAN}[6]{_C.RESET}  Add custom rule
     {_C.CYAN}[7]{_C.RESET}  List available AI models
     {_C.CYAN}[8]{_C.RESET}  Configure API key  ← set/change DIAL or Claude API key in .env
-    {_C.CYAN}[9]{_C.RESET}  Execute YAML       ← run source + target queries from a saved YAML, see pass/fail
-
     {_C.DIM}[q]{_C.RESET}  Quit
 """)
 
@@ -1723,12 +1719,10 @@ def cmd_interactive():
         cmd_add_exclusion(ns)
     elif choice in ("8", "api-key", "configure-api", "apikey"):
         cmd_configure_api_key(ns)
-    elif choice in ("9", "execute", "run-yaml", "exec"):
-        cmd_execute_yaml(ns)
     elif choice in ("q", "quit", "exit"):
         _dim("Bye!")
     else:
-        _warn(f"Unknown choice '{choice}'. Please enter 1-9, c, e, or q.")
+        _warn(f"Unknown choice '{choice}'. Please enter 1-8, c, e, or q.")
 
 
 def _pick_source_connection() -> Optional[dict]:
@@ -2748,6 +2742,15 @@ def _run_parameterized_tables(args, current_model: str, exclude_cols: list) -> N
         _dim("Cancelled.")
         return
 
+    # ── Layer selection ───────────────────────────────────────────────────────
+    print(f"\n  {_C.BOLD}Select data layer:{_C.RESET}")
+    print(f"    {_C.CYAN}[1]{_C.RESET}  bronze  (default)")
+    print(f"    {_C.CYAN}[2]{_C.RESET}  silver")
+    print(f"    {_C.CYAN}[3]{_C.RESET}  gold")
+    _layer_choice = input("  Layer [1]: ").strip() or "1"
+    _layer = {"1": "bronze", "2": "silver", "3": "gold"}.get(_layer_choice, "bronze")
+    _output_dir = Path(__file__).parent.parent / "Project" / "config" / _layer
+
     # ── Pipeline ──────────────────────────────────────────────────────────────
     src_extractor = _make_source_extractor(rec)
     pipeline   = ValidationPipeline(model=current_model, source_extractor=src_extractor)
@@ -2808,6 +2811,7 @@ def _run_parameterized_tables(args, current_model: str, exclude_cols: list) -> N
                 sf_database=sf_database,
                 pg_database=pg_database,
                 exclude_columns=exclude_cols or None,
+                output_dir=_output_dir,
             )
             results.append((src_table, sf_table, result))
             succeeded += 1
@@ -3174,10 +3178,20 @@ def cmd_multi_db(args):
     exclude_raw = getattr(args, "exclude", None) or ""
     base_exclusions = list(STATIC_EXCLUDE_COLUMNS)
     base_exclusions.extend(c.strip() for c in exclude_raw.split(",") if c.strip())
-    table_exclusions = {
-        table: _select_column_exclusions(rec, schema, table, base_exclusions)
-        for table in source_tables
-    }
+
+    want_custom_excl = ""
+    if not exclude_raw:
+        want_custom_excl = input(
+            "\n  Do you want to exclude any custom columns? [y/N]: "
+        ).strip().lower()
+
+    if want_custom_excl in ("y", "yes"):
+        table_exclusions = {
+            table: _select_column_exclusions(rec, schema, table, base_exclusions)
+            for table in source_tables
+        }
+    else:
+        table_exclusions = {table: base_exclusions for table in source_tables}
 
     # ── E: Pick Snowflake target database + schema ────────────────────────────
     sf_database = getattr(args, "sf_database", None) or ""
@@ -3268,6 +3282,15 @@ def cmd_multi_db(args):
         _dim("Cancelled.")
         return
 
+    # ── Layer selection ───────────────────────────────────────────────────────
+    print(f"\n  {_C.BOLD}Select data layer:{_C.RESET}")
+    print(f"    {_C.CYAN}[1]{_C.RESET}  bronze  (default)")
+    print(f"    {_C.CYAN}[2]{_C.RESET}  silver")
+    print(f"    {_C.CYAN}[3]{_C.RESET}  gold")
+    _layer_choice = input("  Layer [1]: ").strip() or "1"
+    _layer = {"1": "bronze", "2": "silver", "3": "gold"}.get(_layer_choice, "bronze")
+    _output_dir = Path(__file__).parent.parent / "Project" / "config" / _layer
+
     # ── G: Pipeline loop ──────────────────────────────────────────────────────
     src_extractor = _make_source_extractor(rec)
     pipeline  = ValidationPipeline(model=current_model, source_extractor=src_extractor)
@@ -3293,6 +3316,7 @@ def cmd_multi_db(args):
                 sf_database=sf_database,
                 pg_database=pg_database,
                 exclude_columns=table_exclusions.get(src_table) or None,
+                output_dir=_output_dir,
             )
             results.append((src_table, sf_table, result))
             succeeded += 1
@@ -3344,349 +3368,6 @@ def _blank():
 # ─────────────────────────────────────────────────────────────────────────────
 # COMMAND: profiles  — manage saved connection profiles
 # ─────────────────────────────────────────────────────────────────────────────
-
-def cmd_execute_yaml(args):
-    """
-    Execute YAML Validation Runner  (menu [9])
-    ───────────────────────────────────────────
-    Loads a saved validation YAML from config/bronze/, runs both source and
-    target queries against live databases, and shows a side-by-side pass/fail
-    comparison.
-
-    Flow:
-      1. Pick a YAML file (count_validation or data_validation)
-      2. Pick which table block to run
-      3. Pick credentials — active env, or load from a saved profile
-      4. Run source query (PostgreSQL / MSSQL)
-      5. Run target query (Snowflake)
-      6. Compare results and print pass/fail
-    """
-    import yaml
-
-    _banner()
-    _head("▶  EXECUTE YAML VALIDATION")
-
-    # ── Step 1: discover YAML files ───────────────────────────────────────────
-    bronze_dir = _SRC_DIR.parent / "config" / "bronze"
-    yaml_files = sorted(
-        list((bronze_dir / "count_validation").glob("*.yaml"))
-        + list((bronze_dir / "data_validation").glob("*.yaml"))
-    )
-
-    if not yaml_files:
-        _warn(f"No YAML files found under {bronze_dir}")
-        _dim("Generate one first using menu [1] or [2].")
-        return
-
-    print(f"\n  {_C.BOLD}Available YAML files:{_C.RESET}\n")
-    for i, p in enumerate(yaml_files, 1):
-        folder = p.parent.name
-        tag = f"{_C.CYAN}[count]{_C.RESET}" if "count" in folder else f"{_C.GREEN}[data] {_C.RESET}"
-        print(f"    {_C.CYAN}[{i}]{_C.RESET}  {tag}  {p.name}")
-    print()
-
-    raw = input(f"  Select file number [1–{len(yaml_files)}]: ").strip()
-    try:
-        idx = int(raw)
-        if not (1 <= idx <= len(yaml_files)):
-            _err("Invalid selection.")
-            return
-    except ValueError:
-        _err("Please enter a number.")
-        return
-
-    chosen_yaml = yaml_files[idx - 1]
-    _ok(f"Loaded: {chosen_yaml}")
-
-    try:
-        with open(chosen_yaml, encoding="utf-8") as fh:
-            config = yaml.safe_load(fh)
-    except Exception as exc:
-        _err(f"Failed to parse YAML: {exc}")
-        return
-
-    tables_cfg = config.get("tables", {})
-    if not tables_cfg:
-        _err("No 'tables:' block found in this YAML.")
-        return
-
-    table_names = list(tables_cfg.keys())
-
-    # ── Step 2: pick which table block ───────────────────────────────────────
-    print(f"\n  {_C.BOLD}Tables in this file:{_C.RESET}\n")
-    for i, t in enumerate(table_names, 1):
-        print(f"    {_C.CYAN}[{i}]{_C.RESET}  {t}")
-    print(f"    {_C.DIM}[0]  Run ALL tables{_C.RESET}")
-    print()
-
-    raw2 = input(f"  Select table (0 = all, 1–{len(table_names)}): ").strip()
-    try:
-        t_idx = int(raw2)
-        if t_idx == 0:
-            selected_tables = table_names
-        elif 1 <= t_idx <= len(table_names):
-            selected_tables = [table_names[t_idx - 1]]
-        else:
-            _err("Invalid selection.")
-            return
-    except ValueError:
-        _err("Please enter a number.")
-        return
-
-    # ── Step 3: credentials — always from .env ───────────────────────────────
-    _dim("Using .env credentials.")
-    src_type = os.getenv("SOURCE_TYPE", "postgresql")
-    src_host = os.getenv("SOURCE_HOST", "localhost")
-    src_port = int(os.getenv("SOURCE_PORT", "5432"))
-    src_db = os.getenv("SOURCE_DATABASE", "")
-    src_user = os.getenv("SOURCE_USERNAME", "")
-    src_pass = os.getenv("SOURCE_PASSWORD", "")
-    src_schema = os.getenv("SOURCE_SCHEMA", "public")
-    sf_account = os.getenv("SNOWFLAKE_ACCOUNT", "")
-    sf_db = os.getenv("SNOWFLAKE_DATABASE", "")
-    sf_user = os.getenv("SNOWFLAKE_USERNAME", "")
-    sf_pass = os.getenv("SNOWFLAKE_PASSWORD", "")
-    sf_wh = os.getenv("SNOWFLAKE_WAREHOUSE", "")
-    sf_role = os.getenv("SNOWFLAKE_ROLE", "")
-    mssql_auth = os.getenv("MSSQL_AUTH", "")
-
-    metadata = _apply_database_registry({"prefix": "SRC_1_", "index": 1})
-    src_db = src_db or metadata.get("database", "")
-    src_schema = src_schema or metadata.get("schema", "public")
-    sf_metadata = _apply_database_registry({"prefix": "SNOWFLAKE_", "index": "SNOWFLAKE"})
-    sf_db = sf_db or sf_metadata.get("database", "")
-    sf_schema = os.getenv("SNOWFLAKE_SCHEMA", "") or sf_metadata.get("schema", "")
-
-    current_source = {
-        "type": src_type,
-        "host": src_host,
-        "port": src_port,
-        "database": src_db,
-        "username": src_user,
-        "password": src_pass,
-        "schema": src_schema,
-        "auth": mssql_auth,
-    }
-
-    # ── Step 4: pick validation type to run ──────────────────────────────────
-    # Discover all validation block names from the first table entry
-    first_table_cfg = tables_cfg[selected_tables[0]]
-    all_validations = list(first_table_cfg.get("validations", {}).keys())
-
-    val_choice = None
-    if len(all_validations) > 1:
-        print(f"\n  {_C.BOLD}Validation blocks available:{_C.RESET}\n")
-        print(f"    {_C.CYAN}[0]{_C.RESET}  Run ALL blocks")
-        for i, v in enumerate(all_validations, 1):
-            print(f"    {_C.CYAN}[{i}]{_C.RESET}  {v}")
-        print()
-        raw4 = input(f"  Select validation [0–{len(all_validations)}]: ").strip()
-        try:
-            v_idx = int(raw4)
-            if v_idx == 0:
-                val_choice = None  # all
-            elif 1 <= v_idx <= len(all_validations):
-                val_choice = all_validations[v_idx - 1]
-        except ValueError:
-            pass
-    elif all_validations:
-        val_choice = all_validations[0]
-
-    # ── Step 5 & 6: execute queries and compare ───────────────────────────────
-    print()
-    _sep()
-    total_passed = 0
-    total_failed = 0
-    total_errors = 0
-
-    for table_name in selected_tables:
-        tbl_cfg = tables_cfg.get(table_name, {})
-        validations = tbl_cfg.get("validations", {})
-        blocks_to_run = (
-            {val_choice: validations[val_choice]}
-            if val_choice and val_choice in validations
-            else validations
-        )
-
-        print(f"\n  {_C.BOLD}{_C.CYAN}▶  {table_name}{_C.RESET}")
-
-        for vname, vdata in blocks_to_run.items():
-            src_sql = vdata.get("sourcequery", "").strip()
-            tgt_sql = vdata.get("targetquery", "").strip()
-            src_label = vdata.get("source", "source")
-            tgt_label = vdata.get("target", "snowflake")
-
-            # A single YAML may contain PostgreSQL and MSSQL blocks. Resolve
-            # the source independently for each block instead of reusing the
-            # connection selected for the first block.
-            block_source = _resolve_yaml_source(src_label, current_source)
-            src_type = block_source["type"]
-            src_host = block_source["host"]
-            src_port = int(block_source["port"])
-            src_db = block_source["database"]
-            src_user = block_source["username"]
-            src_pass = block_source["password"]
-            src_schema = block_source["schema"]
-            mssql_auth = block_source["auth"]
-
-            print(f"\n    {_C.DIM}── {vname} ─────────────────────────────────────────{_C.RESET}")
-
-            # Run source query
-            src_result = None
-            src_error  = None
-            src_columns = []
-            try:
-                src_type_norm = _normalize_db_type(src_type)
-                if src_type_norm == "mssql":
-                    import pyodbc
-                    driver  = os.getenv("MSSQL_DRIVER", "ODBC Driver 18 for SQL Server")
-                    cs_base = (f"DRIVER={{{driver}}};SERVER={src_host},{src_port};"
-                               f"DATABASE={src_db};TrustServerCertificate=yes;Encrypt=optional;")
-                    if mssql_auth.lower() in ("windows", "win"):
-                        cs = cs_base + "Trusted_Connection=yes;"
-                    else:
-                        cs = cs_base + f"UID={src_user};PWD={src_pass};"
-                    conn = pyodbc.connect(cs, timeout=30)
-                    cur = conn.cursor()
-                    cur.execute(src_sql)
-                    src_columns = [description[0] for description in cur.description or []]
-                    rows = cur.fetchall()
-                    conn.close()
-                    src_result = rows
-                else:
-                    import psycopg2
-                    conn = psycopg2.connect(
-                        host=src_host, port=src_port, database=src_db,
-                        user=src_user, password=src_pass, connect_timeout=30,
-                    )
-                    cur = conn.cursor()
-                    cur.execute(src_sql)
-                    src_columns = [description[0] for description in cur.description or []]
-                    rows = cur.fetchall()
-                    conn.close()
-                    src_result = rows
-            except Exception as exc:
-                src_error = str(exc)
-
-            # Run target Snowflake query
-            tgt_result = None
-            tgt_error  = None
-            tgt_columns = []
-            try:
-                import snowflake.connector
-                sf_params = dict(account=sf_account, user=sf_user, password=sf_pass,
-                                 database=sf_db, login_timeout=30)
-                if sf_wh:
-                    sf_params["warehouse"] = sf_wh
-                if sf_role:
-                    sf_params["role"] = sf_role
-                sf_conn = snowflake.connector.connect(**sf_params)
-                sf_cur  = sf_conn.cursor()
-                sf_cur.execute(tgt_sql)
-                tgt_columns = [description[0] for description in sf_cur.description or []]
-                rows = sf_cur.fetchall()
-                sf_conn.close()
-                tgt_result = rows
-            except Exception as exc:
-                tgt_error = str(exc)
-
-            # ── Display results ───────────────────────────────────────────────
-            def _fmt_result(rows, error):
-                if error:
-                    return f"{_C.RED}ERROR{_C.RESET}", error[:80]
-                if rows is None:
-                    return f"{_C.YELLOW}NO DATA{_C.RESET}", ""
-                if len(rows) == 1 and len(rows[0]) == 1:
-                    return f"{_C.GREEN}{rows[0][0]}{_C.RESET}", ""
-                return f"{_C.GREEN}{len(rows)} rows{_C.RESET}", ""
-
-            src_val, src_note = _fmt_result(src_result, src_error)
-            tgt_val, tgt_note = _fmt_result(tgt_result, tgt_error)
-
-            print(f"      {_C.BOLD}Source{_C.RESET}  ({src_label}) : {src_val}"
-                  + (f"  {_C.DIM}{src_note}{_C.RESET}" if src_note else ""))
-            print(f"      {_C.BOLD}Target{_C.RESET}  ({tgt_label}) : {tgt_val}"
-                  + (f"  {_C.DIM}{tgt_note}{_C.RESET}" if tgt_note else ""))
-
-            # Pass/fail logic for count validations (single numeric result)
-            if src_error or tgt_error:
-                total_errors += 1
-                status = f"{_C.RED}✗ ERROR{_C.RESET}"
-            elif (src_result and len(src_result) == 1 and len(src_result[0]) == 1
-                  and tgt_result and len(tgt_result) == 1 and len(tgt_result[0]) == 1):
-                sv = src_result[0][0]
-                tv = tgt_result[0][0]
-                if sv == tv:
-                    total_passed += 1
-                    status = f"{_C.GREEN}✓ PASS{_C.RESET}  (source={sv}, target={tv})"
-                else:
-                    total_failed += 1
-                    diff = abs(int(tv or 0) - int(sv or 0)) if sv is not None and tv is not None else "?"
-                    status = f"{_C.RED}✗ FAIL{_C.RESET}  (source={sv}, target={tv}, diff={diff})"
-            else:
-                # Database engines do not guarantee row order without ORDER BY.
-                # Compare normalized data validations in a deterministic order.
-                def _canonical_row(row, columns):
-                    return tuple(
-                        _canonical_validation_value(name, value)
-                        for name, value in zip(columns, row)
-                    )
-
-                comparable_source = sorted(
-                    (_canonical_row(row, src_columns) for row in src_result),
-                    key=str,
-                ) if src_result else []
-                comparable_target = sorted(
-                    (_canonical_row(row, tgt_columns) for row in tgt_result),
-                    key=str,
-                ) if tgt_result else []
-                row_match = (comparable_source == comparable_target) if (src_result is not None and tgt_result is not None) else False
-                if row_match:
-                    total_passed += 1
-                    status = f"{_C.GREEN}✓ PASS{_C.RESET}  ({len(comparable_source)} rows match, order-independent)"
-                elif src_result and tgt_result:
-                    total_failed += 1
-                    mismatch_note = ""
-                    if vname.lower() == "data_validation" and src_columns and tgt_columns:
-                        source_by_key = {str(row[0]): row for row in src_result}
-                        target_by_key = {str(row[0]): row for row in tgt_result}
-                        mismatches = []
-                        for key in sorted(set(source_by_key) | set(target_by_key)):
-                            source_row = source_by_key.get(key)
-                            target_row = target_by_key.get(key)
-                            if source_row is None or target_row is None:
-                                mismatches.append(f"key={key}: missing on {'source' if source_row is None else 'target'}")
-                                continue
-                            differences = [
-                                name for name, source_value, target_value in zip(
-                                    src_columns, source_row, target_row
-                                ) if _canonical_validation_value(name, source_value)
-                                != _canonical_validation_value(name, target_value)
-                            ]
-                            if differences:
-                                mismatches.append(f"key={key}: {', '.join(differences[:4])}")
-                        if mismatches:
-                            mismatch_note = f"; mismatches={len(mismatches)} ({' | '.join(mismatches[:3])})"
-                    status = f"{_C.RED}✗ FAIL{_C.RESET}  (source={len(src_result)} rows, target={len(tgt_result)} rows{mismatch_note})"
-                else:
-                    total_errors += 1
-                    status = f"{_C.YELLOW}? SKIP{_C.RESET}  (no data to compare)"
-
-            print(f"      {_C.BOLD}Result{_C.RESET}          : {status}")
-
-    # ── Summary ───────────────────────────────────────────────────────────────
-    print()
-    _sep()
-    print(f"\n  {_C.BOLD}SUMMARY{_C.RESET}")
-    print(f"    {_C.GREEN}✓ Passed  : {total_passed}{_C.RESET}")
-    if total_failed:
-        print(f"    {_C.RED}✗ Failed  : {total_failed}{_C.RESET}")
-    if total_errors:
-        print(f"    {_C.YELLOW}⚠ Errors  : {total_errors}{_C.RESET}")
-    overall = total_passed + total_failed + total_errors
-    print(f"    Total     : {overall} check(s) run")
-    print()
-
 
 def cmd_profiles(args):
     """

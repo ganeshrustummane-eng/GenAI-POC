@@ -24,7 +24,6 @@ Quick Start
 Output
 ------
   config/bronze/data_validation/<table>_validation.yaml   ← column-level validation
-  config/bronze/data_validation/<table>_dynamic_suite.yaml ← schema-aware checks
   config/bronze/count_validation/bronze_count_validation.yaml ← row counts
   src/runs/batch_run_*/                   ← Batch run manifests and plan JSON
 

@@ -6,17 +6,20 @@ triggered by QueryOutputManager.generate().
 
 YOU NEVER CREATE YAML FILES MANUALLY.
 When the pipeline runs for any table, it automatically produces:
-  config/bronze/data_validation/<table>.yaml
-      ← data / null% / distinct blocks (no row count)
-  config/bronze/count_validation/bronze.yaml
+  Project/config/bronze/data_validation/<table>.yaml
+      ← data validation queries (column-level comparison)
+  Project/config/bronze/count_validation/bronze.yaml
       ← all tables' row count blocks in one shared file
+
+NOTE: Migration Validator only generates YAML configs.
+      The PROJECT folder executor consumes and runs them.
 
 Output format — data_validation YAML (per-table file):
 ────────────────────────────────────────────────────────────────
 tables:
   <source_table>:
     validations:
-      data_validation:            ← ③ / ④ normalised full-scan
+      data_validation:            ← normalised full-scan SELECT
         source_table_name: ...
         sourcecolumn: <first_column>
         sourcequery: |
@@ -25,12 +28,6 @@ tables:
         pktargetcolumn: <FIRST_COLUMN>
         targetquery: |
           SELECT COL1_normalized, ... FROM ...;
-
-      null_pct_validation:        ← ⑤ / ⑥ NULL % per column
-        ...
-
-      distinct_count_validation:  ← ⑦ / ⑧ distinct counts per column
-        ...
 ────────────────────────────────────────────────────────────────
 
 Output format — bronze_count_validation.yaml (shared file):
@@ -75,11 +72,11 @@ from generated_queries.sql_query_generator import ValidationQuerySet, _plan_to_r
 
 if TYPE_CHECKING:
     from core.validation_plan import CanonicalValidationPlan
-    from dynamic_suite.validation_suite import ValidationSuite
 
 
-# Bronze config output root:  config/bronze/
-_BRONZE_CONFIG_DIR = Path(__file__).parent.parent.parent / "config" / "bronze"
+# Bronze config output root: Project/config/bronze/
+# Migration Validator generates YAMLs here; PROJECT folder consumes them
+_BRONZE_CONFIG_DIR = Path(__file__).parent.parent.parent / "Project" / "config" / "bronze"
 
 # Indentation for YAML literal block scalar content.
 # The 'sourcequery: |' key sits at 8-space depth inside the YAML tree.
@@ -171,7 +168,7 @@ class YAMLConfigWriter:
             model_used=query_set.model_used,
         )
 
-        yaml_path = out_dir / f"{pg_table.lower()}.yaml"
+        yaml_path = out_dir / f"{pg_table}.yaml"
         with open(yaml_path, "w", encoding="utf-8") as f:
             f.write(yaml_content)
 
@@ -266,114 +263,6 @@ class YAMLConfigWriter:
             has_fivetran_active=plan.has_fivetran_active,
             output_dir=output_dir,
         )
-
-    def write_dynamic_suite(
-        self,
-        suite: "ValidationSuite",
-        pg_table: str,
-        source_db_type: str = "postgresql",
-        output_dir: Optional[Path] = None,
-    ) -> Path:
-        """
-        Write a YAML config for the dynamic validation suite.
-
-        Produces one validation block per generated query pair in the suite
-        (row_count, combined_aggregate, duplicate_check, etc.).
-
-        Args:
-            suite           : ValidationSuite from DynamicSuiteGenerator
-            pg_table        : Source table name (used for the file name)
-            source_db_type  : Source database type (default: 'postgresql')
-            output_dir      : Output directory (default: config/bronze/data_validation/)
-
-        Returns:
-            Path to the written YAML file.
-        """
-        out_dir = output_dir or (_BRONZE_CONFIG_DIR / "data_validation")
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        def _prep(sql: str) -> str:
-            return _indent_for_yaml(_strip_generator_header(sql), _QUERY_INDENT)
-
-        fivetran_comment = (
-            "\n#   - Fivetran  : WHERE _FIVETRAN_ACTIVE = TRUE (Snowflake side)"
-            if suite.has_fivetran_active
-            else ""
-        )
-
-        lines = [
-            "# ============================================================",
-            "# Migration Validator — Dynamic Suite YAML Validation Config",
-            f"# Table      : {suite.source_table}",
-            f"# Generated  : {suite.generated_at}",
-            f"# By         : {suite.generated_by} (model: {suite.model_used})",
-            f"# Checks     : {suite.total_query_pairs} query pair(s)",
-            f"#              {len(suite.baseline_queries)} baseline, "
-            f"{len(suite.conditional_queries)} conditional",
-            "#",
-            "# This file contains schema-aware conditional checks in addition",
-            "# to the baseline 8-query set — MIN/MAX, SUM (financial/quantity),",
-            "# duplicate checks (business keys), value distribution (enum/status),",
-            "# and optional AI-recommended business-rule checks.",
-            f"#{fivetran_comment}",
-            "# ============================================================",
-            "",
-            "tables:",
-            f"  {suite.source_table}:",
-            "    validations:",
-            "",
-        ]
-
-        for gq in suite.queries:
-            from dynamic_suite.sql_validator import validate_sql_pair
-            validate_sql_pair(gq.source_sql, gq.target_sql, source_db_type)
-            key = (
-                gq.label.lower()
-                .replace(" ", "_")
-                .replace("(", "")
-                .replace(")", "")
-                .replace("+", "")
-                .replace("/", "_")
-                .replace("-", "_")
-                .replace(",", "")
-                .replace(".", "")
-            )
-            while "__" in key:
-                key = key.replace("__", "_")
-            key = key.strip("_")
-
-            lines += [
-                f"      # ── {gq.query_number} {gq.label} ─────────────────────",
-                f"      {key}:",
-                f"        source_table_name: {suite.source_table}",
-                f"        source: {source_db_type}",
-                "        sourcequery: |",
-                _prep(gq.source_sql),
-                f"        target_table_name: {suite.target_table}",
-                "        target: snowflake",
-                "        targetquery: |",
-                _prep(gq.target_sql),
-            ]
-            if gq.comparison_note:
-                lines.append(f"        comparison_note: \"{gq.comparison_note}\"")
-            lines.append("")
-
-        if suite.ai_recommendations:
-            lines += [
-                "      # ── AI-recommended business-rule checks ──────────────",
-                "      # Run as: SELECT COUNT(*) FROM <table> WHERE NOT (<cond>)",
-                "      # Any count > 0 = data quality issue.",
-                "      # These are not executable blocks — review and adapt manually.",
-            ]
-            for rec in suite.ai_recommendations:
-                lines.append(f"      # [{rec.check_name}] {rec.description}: {rec.pg_expr}")
-
-        yaml_path = out_dir / f"{pg_table.lower()}_dynamic_suite.yaml"
-        with open(yaml_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines))
-
-        print(f"  📋 Dynamic YAML saved  : {yaml_path.resolve()}")
-        return yaml_path
 
     def write_from_plan(
         self,
@@ -494,12 +383,12 @@ def _build_data_yaml(
         "      data_validation:",
         f"        source_table_name: {table_name_source}",
         f"        source: {source_db_type}",
-        f"        pksourcecolumn: {source_column}",
+        f"        pksourcecolumn: {source_column + '_normalized' if source_column else ''}",
         "        sourcequery: |",
         data_source_yaml,
         f"        target_table_name: {table_name_target}",
         "        target: snowflake",
-        f"        pktargetcolumn: {target_column}",
+        f"        pktargetcolumn: {target_column + '_normalized' if target_column else ''}",
         "        targetquery: |",
         data_target_yaml,
         "",

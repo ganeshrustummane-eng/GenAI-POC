@@ -1,3 +1,0 @@
-run_id,run_at,validation_performed,source_table_name,source_type,target_table_name,target_type,source_count,missing_in_source,target_count,missing_in_target,status,output_file_path,batch_start_time,batch_end_time,total_time_taken
-20260815_154831_084958,15-Aug-2026 15:48:31.085005,data_validation,AcctSoftware,mssql,ACCTSOFTWARE,snowflake,19,0,17,2,FAIL,AcctSoftware_data_validation_mismatch_20260815_154831_084958.csv,2026-08-15 15:48:36.871040,2026-08-15 15:48:41.685269,4.81s
-20260815_154831_084958,15-Aug-2026 15:48:31.085005,data_validation,Addresses,mssql,ADDRESSES,snowflake,24,0,24,0,PASS,,2026-08-15 15:48:41.697575,2026-08-15 15:48:44.815667,3.12s

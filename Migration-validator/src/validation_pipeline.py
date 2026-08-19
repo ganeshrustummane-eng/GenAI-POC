@@ -90,7 +90,6 @@ from sql_extractor.extractors import FIVETRAN_ACTIVE_COLUMN
 from ai_transformation import RuleMapperOrchestrator, AVAILABLE_MODELS
 from generated_queries import QueryOutputManager, GenerationResult
 from generated_queries.yaml_config_writer import YAMLConfigWriter
-from dynamic_suite import DynamicSuiteGenerator
 
 # New matching pipeline imports
 from matching.candidate_matcher import CandidateMatcher
@@ -141,12 +140,6 @@ class ValidationPipeline:
         self._rule_mapper    = RuleMapperOrchestrator(model=model)
         self._output_mgr     = QueryOutputManager()
         self._yaml_writer    = YAMLConfigWriter()
-        self._dynamic_gen    = DynamicSuiteGenerator(
-            api_key=os.getenv("DIAL_API_KEY"),
-            api_base=os.getenv("DIAL_API_BASE"),
-            api_version=os.getenv("DIAL_API_VERSION"),
-            model=model or os.getenv("DIAL_MODEL", "gpt-4o"),
-        )
 
     def set_model(self, model: str) -> None:
         """
@@ -183,6 +176,7 @@ class ValidationPipeline:
         pg_database: Optional[str] = None,
         exclude_columns: Optional[List[str]] = None,
         source_db_type: Optional[str] = None,
+        output_dir: Optional[Path] = None,
     ) -> GenerationResult:
         """
         Run the complete validation pipeline for one table pair.
@@ -270,33 +264,8 @@ class ValidationPipeline:
             generated_by=generated_by,
             model_used=model_used,
             source_db_type=_src_db_type,
+            output_dir=output_dir,
         )
-
-        # ── Dynamic suite (additive — runs after baseline) ────────────────────
-        print("\n[+] Running dynamic validation suite generator...")
-        try:
-            suite = self._dynamic_gen.generate(
-                source_columns=src_columns,
-                source_schema=pg_schema,
-                source_table=pg_table,
-                sf_database=_sf_db,
-                sf_schema=sf_schema,
-                sf_table=sf_table,
-                has_fivetran_active=has_fivetran_active,
-                active_mappings=mappings,
-                source_db_type=_src_db_type,
-                use_ai_recommendations=bool(os.getenv("DIAL_API_KEY")),
-                generated_by=generated_by,
-                model_used=model_used,
-            )
-            dyn_yaml_path = self._yaml_writer.write_dynamic_suite(
-                suite=suite,
-                pg_table=pg_table,
-                source_db_type=_src_db_type,
-            )
-            result.dynamic_suite_yaml_path = dyn_yaml_path
-        except Exception as dyn_exc:
-            print(f"  ⚠  Dynamic suite generation failed (baseline still saved): {dyn_exc}")
 
         return result
 
@@ -310,6 +279,7 @@ class ValidationPipeline:
         pg_database: Optional[str] = None,
         explicit_mappings: Optional[dict] = None,
         exclude_columns: Optional[List[str]] = None,
+        output_dir: Optional[Path] = None,
     ) -> "tuple[GenerationResult, CanonicalValidationPlan]":
         """
         Run the full new pipeline using the CanonicalValidationPlan architecture.
@@ -587,35 +557,7 @@ class ValidationPipeline:
 
         # ── Step 7: Generate SQL + YAML ───────────────────────────────────────
         print("\n[7/7] Generating SQL validation queries and YAML config file...")
-        result = self._output_mgr.generate_from_plan(plan)
-
-        # ── Dynamic suite (additive) ───────────────────────────────────────────
-        print("\n[+] Running dynamic validation suite generator...")
-        try:
-            from generated_queries.sql_query_generator import _plan_to_rule_mappings
-            rule_mappings = _plan_to_rule_mappings(plan.active_mappings)
-            suite = self._dynamic_gen.generate(
-                source_columns=src_columns,
-                source_schema=pg_schema,
-                source_table=pg_table,
-                sf_database=_sf_db,
-                sf_schema=sf_schema,
-                sf_table=sf_table,
-                has_fivetran_active=has_fivetran_active,
-                active_mappings=rule_mappings,
-                source_db_type=_src_db_type,
-                use_ai_recommendations=bool(os.getenv("DIAL_API_KEY")),
-                generated_by=plan.generated_by,
-                model_used=plan.model_used,
-            )
-            dyn_yaml_path = self._yaml_writer.write_dynamic_suite(
-                suite=suite,
-                pg_table=pg_table,
-                source_db_type=_src_db_type,
-            )
-            result.dynamic_suite_yaml_path = dyn_yaml_path
-        except Exception as dyn_exc:
-            print(f"  ⚠  Dynamic suite generation failed (baseline still saved): {dyn_exc}")
+        result = self._output_mgr.generate_from_plan(plan, output_dir=output_dir)
 
         return result, plan
 
