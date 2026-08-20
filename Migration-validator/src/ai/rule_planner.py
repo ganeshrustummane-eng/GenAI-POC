@@ -38,6 +38,15 @@ from sql_extractor.extractors import ColumnMetadata
 from ai.prompt_builder import PromptBuilder
 from ai.response_parser import ResponseParser, AIColumnDecision
 
+try:
+    from token_usage_analysis.token_logger import log_usage, extract_openai_usage
+except ImportError:
+    def log_usage(*args, **kwargs):  # pragma: no cover - logging is best-effort
+        pass
+
+    def extract_openai_usage(response):  # pragma: no cover
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
 
 # ---------------------------------------------------------------------------
 # Constants — reuse the same DIAL defaults as AIRuleMapper
@@ -212,6 +221,17 @@ class RulePlanner:
                 )
                 raw = response.choices[0].message.content
                 ai_calls_made += 1
+
+                usage = extract_openai_usage(response)
+                log_usage(
+                    backend="dial",
+                    model=self.model,
+                    call_type="column_mapping",
+                    context=f"{table_name}.{src_col.column_name}" if table_name else src_col.column_name,
+                    prompt_tokens=usage["prompt_tokens"],
+                    completion_tokens=usage["completion_tokens"],
+                    total_tokens=usage["total_tokens"],
+                )
 
                 ai_dec = self._parser.parse(
                     raw_json=raw,

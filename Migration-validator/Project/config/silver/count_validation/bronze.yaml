@@ -55,3 +55,17 @@ tables:
           SELECT COUNT(*) AS target_row_count
           FROM DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.ADDRESSES
           WHERE _FIVETRAN_ACTIVE = TRUE;
+  general_ledger_line_items:
+    validations:
+      count_validation:
+        source_table_name: general_ledger_line_items
+        source: postgresql
+        sourcequery: |
+          SELECT COUNT(*) AS source_row_count
+          FROM public.general_ledger_line_items;
+        target_table_name: GENERAL_LEDGER_LINE_ITEMS
+        target: snowflake
+        targetquery: |
+          SELECT COUNT(*) AS target_row_count
+          FROM DEV_EDGE_BRONZE.STOREDGE_FMS_PUBLIC.GENERAL_LEDGER_LINE_ITEMS
+          WHERE _FIVETRAN_ACTIVE = TRUE;

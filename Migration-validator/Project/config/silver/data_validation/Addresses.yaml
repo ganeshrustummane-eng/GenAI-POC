@@ -1,7 +1,7 @@
 # ============================================================
 # Migration Validator — Data Validation Config
 # Table      : Addresses
-# Generated  : 2026-08-19T12:45:48.904958
+# Generated  : 2026-08-19T21:19:09.582544
 # By         : AI (model: gpt-4o)
 # Columns    : 26 comparable columns
 #
@@ -90,14 +90,7 @@ tables:
               COALESCE(CAST(SPHONE6 AS STRING), '<<NULL>>') AS "sPhone6_normalized",
               COALESCE(CAST(DCLONGITUDE AS STRING), '<<NULL>>') AS "dcLongitude_normalized",
               COALESCE(CAST(DCLATITUDE AS STRING), '<<NULL>>') AS "dcLatitude_normalized",
-              COALESCE(
-                  CASE 
-                      WHEN BPERMANENT = TRUE THEN '1' 
-                      WHEN BPERMANENT = FALSE THEN '0' 
-                      ELSE NULL 
-                  END, 
-                  '<<NULL>>'
-              ) AS "bPermanent_normalized",
+              COALESCE(CASE WHEN BPERMANENT = TRUE THEN '1' WHEN BPERMANENT = FALSE THEN '0' ELSE NULL END, '<<NULL>>') AS "bPermanent_normalized",
               COALESCE(TO_VARCHAR(DDELETED, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "dDeleted_normalized",
               COALESCE(TO_VARCHAR(DUPDATED, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "dUpdated_normalized",
               COALESCE(TO_VARCHAR(DARCHIVED, 'YYYY-MM-DD HH24:MI:SS'), '<<NULL>>') AS "dArchived_normalized",

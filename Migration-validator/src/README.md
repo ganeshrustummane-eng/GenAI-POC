@@ -273,28 +273,46 @@ validation_sql/
 
 ## 🧩 Adding a New Rule (Developer Guide)
 
-1. **Create** `src/rules/my_rule.py` extending `BaseValidationRule`
-2. **Register** it in `src/rules/__init__.py` — `_registry.register(MyRule())`
-3. **Add** it to `src/rules_catalog.json` with matching `id` and `enum_value`
-4. **Done** — it's automatically picked up by the pipeline
+1. **Add the class** to `src/rules/postgres_base_rules.py` (this is the one
+   canonical file for all rule logic — see the note at the top of that file
+   for why `mssql_rules.py`/`athena_rules.py`/`snowflake_rules.py` are only
+   re-export shims, not separate rule implementations).
+2. **Register** it in `src/rules/__init__.py` — import the class, then
+   `_registry.register(MyRule())` **before** `_registry.register(TextRule())`
+   (the wildcard `("*", "*")` fallback must always be registered last).
+3. **Optionally** add it to `src/rules_catalog.json` so it shows up in
+   `validate_cli.py rules` and in AI prompt context.
+4. **Done** — `get_rule_for_type()` picks it up automatically for every
+   future `generate`/`batch` run.
+
+No database source is optional: `BaseValidationRule` requires **all four**
+dialect methods to be implemented (`_pg_expression`, `_ms_expression`,
+`_athena_expression`, `_sf_expression`) — Python enforces this at
+class-definition time, so a rule missing one of them fails to instantiate
+immediately rather than silently reusing PostgreSQL syntax somewhere it
+isn't valid (e.g. MSSQL/Athena don't support `TO_CHAR`/`::jsonb`/`AS TEXT`).
 
 ```python
-# src/rules/my_rule.py
-from rules.base_rule import BaseValidationRule
-
+# in src/rules/postgres_base_rules.py
 class MyRule(BaseValidationRule):
     @property
-    def rule_name(self): return "my_rule"
+    def rule_name(self) -> str: return "my_rule"
 
     @property
-    def description(self): return "My custom transformation"
+    def description(self) -> str: return "My custom transformation"
 
     @property
     def trigger_pairs(self):
-        return [("MY_PG_TYPE", "MY_SF_TYPE")]
+        return [("MY_SOURCE_TYPE", "MY_SNOWFLAKE_TYPE")]
 
     def _pg_expression(self, col: str) -> str:
         return f"MY_PG_TRANSFORM({col})"
+
+    def _ms_expression(self, col: str) -> str:
+        return f"MY_MSSQL_TRANSFORM({col})"
+
+    def _athena_expression(self, col: str) -> str:
+        return f"my_athena_transform({col})"
 
     def _sf_expression(self, col: str) -> str:
         return f"MY_SF_TRANSFORM({col})"

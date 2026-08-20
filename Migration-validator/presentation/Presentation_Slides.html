@@ -355,10 +355,50 @@
     </div>
 </div>
 
-<!-- Slide 2: Problem Statement -->
+<!-- Slide 2: What We Are Doing -->
 <div class="slide slide-content">
-    <h2>🎯 The Challenge</h2>
-    
+    <h2>📌 What We Are Doing</h2>
+
+    <p>
+        As part of the <strong>Storable Data Migration/Modernization Project</strong>,
+        data is being migrated from PostgreSQL, Microsoft SQL Server, and AWS Athena
+        into Snowflake. Migration Validator is the tool we're building to prove that
+        migration was done correctly — for hundreds of tables, without hand-written SQL.
+    </p>
+
+    <div class="two-col">
+        <div class="col">
+            <h3>In Scope Right Now</h3>
+            <ul>
+                <li>Schema extraction across all 3 source dialects</li>
+                <li>Deterministic + AI-assisted column matching</li>
+                <li>Dialect-aware AI SQL generation (row count + full data)</li>
+                <li>Per-source exclusion policy (PostgreSQL / MSSQL / Athena)</li>
+                <li>Batch mode to validate hundreds of tables in parallel</li>
+            </ul>
+        </div>
+        <div class="col">
+            <h3>Why It Matters</h3>
+            <ul>
+                <li>Every comparison is type-aware, not just row counts</li>
+                <li>Every run reports coverage — nothing skipped silently</li>
+                <li>One canonical plan (plan.json) is the audit trail</li>
+                <li>Rule book (base + learned) evolves without redeploys</li>
+                <li>Removes the manual-SQL bottleneck from the testing team</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="slide-footer">
+        <span>Migration Validator v3.1</span>
+        <span>2 / 10</span>
+    </div>
+</div>
+
+<!-- Slide 3: Problem Statement -->
+<div class="slide slide-content">
+    <h2>🎯 Problem → Solution</h2>
+
     <div class="two-col">
         <div class="col">
             <h3>Traditional Approach</h3>
@@ -381,14 +421,14 @@
             </ul>
         </div>
     </div>
-    
+
     <div class="slide-footer">
         <span>Migration Validator v3.1</span>
-        <span>2 / 8</span>
+        <span>3 / 10</span>
     </div>
 </div>
 
-<!-- Slide 3: Key Features -->
+<!-- Slide 4: Key Features -->
 <div class="slide slide-features">
     <h2>✨ Key Features</h2>
     
@@ -427,11 +467,11 @@
     
     <div class="slide-footer">
         <span>Migration Validator v3.1</span>
-        <span>3 / 8</span>
+        <span>4 / 10</span>
     </div>
 </div>
 
-<!-- Slide 4: Architecture Overview -->
+<!-- Slide 5: Architecture Overview -->
 <div class="slide slide-architecture">
     <h2>🏗️ Architecture Overview</h2>
     
@@ -469,11 +509,11 @@
     
     <div class="slide-footer">
         <span>Migration Validator v3.1</span>
-        <span>4 / 8</span>
+        <span>5 / 10</span>
     </div>
 </div>
 
-<!-- Slide 5: Validation Flow -->
+<!-- Slide 6: Validation Flow -->
 <div class="slide slide-content">
     <h2>⚙️ How It Works</h2>
     
@@ -517,22 +557,65 @@
     
     <div class="slide-footer">
         <span>Migration Validator v3.1</span>
-        <span>5 / 8</span>
+        <span>6 / 10</span>
     </div>
 </div>
 
-<!-- Slide 6: Demo -->
+<!-- Slide 7: Challenges We Solved -->
+<div class="slide slide-architecture">
+    <h2>⚠️ Challenges We Solved</h2>
+
+    <div class="features-grid">
+        <div class="feature-card">
+            <div class="icon">🧩</div>
+            <h4>Four SQL Dialects, One Result</h4>
+            <p>PostgreSQL, MSSQL, Athena/Trino and Snowflake each need different CAST/date/format syntax — one wrong function silently breaks a table's validation.</p>
+        </div>
+        <div class="feature-card">
+            <div class="icon">🕳️</div>
+            <h4>NULL Never Equals NULL</h4>
+            <p>SQL's own comparison rules mean two NULLs never match. Solved with a universal <code>&lt;&lt;NULL&gt;&gt;</code> sentinel wrapped around every normalized expression.</p>
+        </div>
+        <div class="feature-card">
+            <div class="icon">🔗</div>
+            <h4>Ambiguous Column Names</h4>
+            <p>created_at vs CreatedDate vs createdOn — exact matching alone isn't enough. Needed fuzzy scoring plus a narrow, token-efficient AI fallback.</p>
+        </div>
+        <div class="feature-card">
+            <div class="icon">🚫</div>
+            <h4>AI-Only, No Silent Fallback</h4>
+            <p>A degraded query that "looks right" is worse than no query. Required a 3-attempt self-correction loop instead of ever guessing.</p>
+        </div>
+        <div class="feature-card">
+            <div class="icon">📏</div>
+            <h4>Scaling to Hundreds of Tables</h4>
+            <p>One-by-one runs don't scale. Built a parallel batch orchestrator driven by a single tables.yaml, with a manifest reporting per-table pass/fail.</p>
+        </div>
+        <div class="feature-card">
+            <div class="icon">🔐</div>
+            <h4>Exclusions Differ Per Source</h4>
+            <p>MSSQL rowversion columns aren't a PostgreSQL or Athena problem. Split exclusion policy into one file per source type, applied to both source and Snowflake target.</p>
+        </div>
+    </div>
+
+    <div class="slide-footer">
+        <span>Migration Validator v3.1</span>
+        <span>7 / 10</span>
+    </div>
+</div>
+
+<!-- Slide 8: Demo -->
 <div class="slide slide-demo">
     <h2>💻 Quick Demo</h2>
-    
+
     <div class="code-block">
         <span class="code-comment"># Launch the CLI</span><br>
         python src\validate_cli.py<br><br>
-        
+
         <span class="code-comment"># Or generate directly</span><br>
         python src\validate_cli.py generate \<br>
         &nbsp;&nbsp;--source 2 \<br>
-        &nbsp;&nbsp;--pg-table Addresses \<br>
+        &nbsp;&nbsp;--source-table Addresses \<br>
         &nbsp;&nbsp;--sf-table ADDRESSES
     </div>
     
@@ -550,11 +633,11 @@
     
     <div class="slide-footer">
         <span>Migration Validator v3.1</span>
-        <span>6 / 8</span>
+        <span>8 / 10</span>
     </div>
 </div>
 
-<!-- Slide 7: Results & Benefits -->
+<!-- Slide 9: Results & Benefits -->
 <div class="slide slide-content">
     <h2>📈 Impact & Benefits</h2>
     
@@ -596,11 +679,11 @@
     
     <div class="slide-footer">
         <span>Migration Validator v3.1</span>
-        <span>7 / 8</span>
+        <span>9 / 10</span>
     </div>
 </div>
 
-<!-- Slide 8: Closing -->
+<!-- Slide 10: Closing -->
 <div class="slide slide-closing">
     <div class="logo-icon">🔄</div>
     <h1 style="font-size: 56px;">Migration Validator</h1>
