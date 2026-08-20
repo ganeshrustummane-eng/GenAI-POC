@@ -210,7 +210,7 @@ class ValidationPipeline:
         # ── Step 1: Extract schemas ──────────────────────────────────────────
         print("\n[1/3] Extracting column schemas from source and target databases...")
         src_columns = self._extract_source(pg_schema, pg_table, _pg_db)
-        tgt_columns = self._extract_target(sf_schema, sf_table)
+        tgt_columns = self._extract_target(sf_schema, sf_table, _sf_db)
 
         # ── Column exclusion ─────────────────────────────────────────────────
         if exclude_columns:
@@ -314,7 +314,7 @@ class ValidationPipeline:
         # ── Step 1: Extract schemas + PK detection ───────────────────────────
         print("\n[1/7] Extracting schemas from source and target databases...")
         src_columns = self._extract_source(pg_schema, pg_table, _pg_db)
-        tgt_columns = self._extract_target(sf_schema, sf_table)
+        tgt_columns = self._extract_target(sf_schema, sf_table, _sf_db)
 
         # ── Column exclusion ─────────────────────────────────────────────────
         if exclude_columns:
@@ -333,7 +333,7 @@ class ValidationPipeline:
 
         # PK detection (non-fatal — logs warning on failure)
         src_pk = self._src_extractor.detect_primary_key(pg_schema, pg_table)
-        tgt_pk = self._sf_extractor.detect_primary_key(sf_schema, sf_table)
+        tgt_pk = self._sf_extractor.detect_primary_key(sf_schema, sf_table, database=_sf_db or None)
 
         if not src_pk.has_pk:
             print(f"  ⚠ No PK found on source {pg_schema}.{pg_table} — duplicate/missing row checks will be skipped.")
@@ -573,10 +573,10 @@ class ValidationPipeline:
             print(f"  ✗ Source extraction failed for '{schema}.{table}': {exc}")
             raise
 
-    def _extract_target(self, schema: str, table: str):
+    def _extract_target(self, schema: str, table: str, database: str = ""):
         """Extract Snowflake column metadata. Raises on failure."""
         try:
-            return self._sf_extractor.extract_columns(schema, table)
+            return self._sf_extractor.extract_columns(schema, table, database=database or None)
         except Exception as exc:
             print(f"  ✗ Snowflake extraction failed for '{schema}.{table}': {exc}")
             raise

@@ -862,13 +862,6 @@ def cmd_generate(args):
             _seen.add(c)
             exclude_cols.append(c)
 
-    if not getattr(args, "exclude", None):
-        want_custom_excl = input(
-            "\n  Do you want to exclude any custom columns? [y/N]: "
-        ).strip().lower()
-        if want_custom_excl in ("y", "yes"):
-            exclude_cols = _select_column_exclusions(rec, pg_schema, pg_table, exclude_cols)
-
     # ── Config summary — detect active backend correctly ────────────────────
     _dial_key_chk   = os.getenv("DIAL_API_KEY", "")
     _claude_key_chk = os.getenv("CLAUDE_API_KEY", "")
@@ -900,30 +893,10 @@ def cmd_generate(args):
 """)
 
 
-    # ── Rule book review ──────────────────────────────────────────────────────
-    current_model = _rule_review_step(args, current_model)
-
-    # ── Model selection (if not passed as CLI arg) ────────────────────────────
-    if not getattr(args, "model", None):
-        change = input(
-            f"\n  Change AI model? Current: {_C.CYAN}{current_model}{_C.RESET} [y/N]: "
-        ).strip().lower()
-        if change in ("y", "yes"):
-            current_model = _select_model_interactive(current_model)
-
-    # ── Confirm ───────────────────────────────────────────────────────────────
-    confirm = input("\n  Proceed with query generation? [Y/n]: ").strip().lower()
-    if confirm in ("n", "no"):
-        _dim("Cancelled.")
-        return
-
-    # ── Layer selection ───────────────────────────────────────────────────────
-    print(f"\n  {_C.BOLD}Select data layer:{_C.RESET}")
-    print(f"    {_C.CYAN}[1]{_C.RESET}  bronze  (default)")
-    print(f"    {_C.CYAN}[2]{_C.RESET}  silver")
-    print(f"    {_C.CYAN}[3]{_C.RESET}  gold")
-    _layer_choice = input("  Layer [1]: ").strip() or "1"
-    _layer = {"1": "bronze", "2": "silver", "3": "gold"}.get(_layer_choice, "bronze")
+    # Source/target are picked above; everything else (rule book review, AI
+    # model change, layer choice) uses defaults so generation runs straight
+    # through — pass --model / --layer on the command line to override.
+    _layer = getattr(args, "layer", None) or "bronze"
     _output_dir = Path(__file__).parent.parent / "Project" / "config" / _layer
 
     # ── Run pipeline ──────────────────────────────────────────────────────────
@@ -1134,7 +1107,7 @@ def cmd_add_rule(args):
     Interactive wizard to add a new rule to rule_book_learned.json.
     The rule is saved permanently and injected into ALL future AI prompts.
     """
-    from rule_book import rule_book, RuleEntry
+    from rule_book import rule_book, RuleEntry, RuleValidationError
 
     _banner()
     _head("➕  ADD NEW RULE TO RULE BOOK")
@@ -1212,7 +1185,13 @@ def cmd_add_rule(args):
         example=example or None,
     )
 
-    if rule_book.save_learned_rule(entry):
+    try:
+        saved = rule_book.save_learned_rule(entry)
+    except RuleValidationError as exc:
+        _err(f"Rejected: {exc}")
+        return
+
+    if saved:
         _ok(f"Rule '{rule_id}' saved to rule_book_learned.json ✓")
         _ok("It will be included in ALL future AI prompts automatically.")
         print(f"\n  {_C.DIM}File: {_SRC_DIR / 'rule_book_learned.json'}{_C.RESET}")
@@ -1508,8 +1487,8 @@ def cmd_interactive():
     {_C.MAGENTA}[c]{_C.RESET}  Connections        ← ping PostgreSQL / MS SQL Server / Athena / Snowflake
 
   ── Validation Workflows ─────────────────────────────────────────
-    {_C.GREEN}[1]{_C.RESET}  Single Table       ← pick source → pick table → generate SQL + YAML
-    {_C.GREEN}[2]{_C.RESET}  Run Tables         ← pick source → pick schema → type table names → validate all
+    {_C.GREEN}[1]{_C.RESET} Run Multiple Tables         ← pick source → pick schema → type table names → validate all
+                     (type just one table name to validate a single table)
 
   ── Exclusion Management ─────────────────────────────────────────
     {_C.YELLOW}[E]{_C.RESET}  Global Exclusions  ← add columns excluded from ALL tables, source & target"""
@@ -1517,14 +1496,14 @@ def cmd_interactive():
     f"""
 
   ── Tools ────────────────────────────────────────────────────────
-    {_C.CYAN}[3]{_C.RESET}  List tables        ← show tables in all configured databases
-    {_C.CYAN}[4]{_C.RESET}  Select AI model"""
+    {_C.CYAN}[2]{_C.RESET}  List tables        ← show tables in all configured databases
+    {_C.CYAN}[3]{_C.RESET}  Select AI model"""
     + ai_badge +
     f"""
-    {_C.CYAN}[5]{_C.RESET}  View rule book
-    {_C.CYAN}[6]{_C.RESET}  Add custom rule
-    {_C.CYAN}[7]{_C.RESET}  List available AI models
-    {_C.CYAN}[8]{_C.RESET}  Configure API key  ← set/change DIAL or Claude API key in .env
+    {_C.CYAN}[4]{_C.RESET}  View rule book
+    {_C.CYAN}[5]{_C.RESET}  Add custom rule
+    {_C.CYAN}[6]{_C.RESET}  List available AI models
+    {_C.CYAN}[7]{_C.RESET}  Configure API key  ← set/change DIAL or Claude API key in .env
     {_C.DIM}[q]{_C.RESET}  Quit
 """)
 
@@ -1533,13 +1512,11 @@ def cmd_interactive():
 
     if choice in ("c", "conn", "connections"):
         cmd_connections(ns)
-    elif choice in ("1", "generate", "single"):
-        cmd_generate(ns)
-    elif choice in ("2", "multiple", "tables", "run"):
+    elif choice in ("1", "multiple", "tables", "run"):
         cmd_multi_db(ns)
-    elif choice in ("3", "list-tables", "list"):
+    elif choice in ("2", "list-tables", "list"):
         cmd_list_tables(ns)
-    elif choice in ("4", "model", "select-model"):
+    elif choice in ("3", "model", "select-model"):
         # Read the correct current model depending on active backend
         _dk = os.getenv("DIAL_API_KEY", "")
         _ck = os.getenv("CLAUDE_API_KEY", "")
@@ -1557,20 +1534,20 @@ def cmd_interactive():
             os.environ["DIAL_MODEL"] = new_model
             _ok(f"DIAL model set to '{new_model}' for this session.")
             _dim("To persist: update DIAL_MODEL in your .env file.")
-    elif choice in ("5", "rules"):
+    elif choice in ("4", "rules"):
         cmd_rules(ns)
-    elif choice in ("6", "add-rule", "add"):
+    elif choice in ("5", "add-rule", "add"):
         cmd_add_rule(ns)
-    elif choice in ("7", "list-models", "models"):
+    elif choice in ("6", "list-models", "models"):
         _list_models_cmd()
     elif choice in ("e", "exclusion", "exclusions", "add-exclusion"):
         cmd_add_exclusion(ns)
-    elif choice in ("8", "api-key", "configure-api", "apikey"):
+    elif choice in ("7", "api-key", "configure-api", "apikey"):
         cmd_configure_api_key(ns)
     elif choice in ("q", "quit", "exit"):
         _dim("Bye!")
     else:
-        _warn(f"Unknown choice '{choice}'. Please enter 1-8, c, e, or q.")
+        _warn(f"Unknown choice '{choice}'. Please enter 1-7, c, e, or q.")
 
 
 def _pick_source_connection() -> Optional[dict]:
@@ -3566,6 +3543,13 @@ Utilities:
         metavar="NAME",
         help="Use a saved connection profile (skips all interactive pickers). "
              "Run 'profiles' to see available profiles.",
+    )
+    gen.add_argument(
+        "--layer",
+        dest="layer",
+        default=None,
+        choices=("bronze", "silver", "gold"),
+        help="Medallion layer — output folder for the generated config (default: bronze).",
     )
 
     # ── multi ─────────────────────────────────────────────────────────────────

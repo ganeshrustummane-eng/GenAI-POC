@@ -48,6 +48,7 @@ Usage
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -62,6 +63,50 @@ from rules import get_rule_for_type as _registry_lookup, BaseValidationRule
 _SRC_DIR      = Path(__file__).parent
 _CATALOG_PATH = _SRC_DIR / "rules_catalog.json"
 _LEARNED_PATH = _SRC_DIR / "rule_book_learned.json"
+
+
+# ---------------------------------------------------------------------------
+# SQL template validation — learned rules are metadata/display text today
+# (see module docstring: SQL generation always goes through the rules/
+# package registry, never through a RuleEntry's templates), but nothing
+# stops a future change from wiring them into real query generation. Reject
+# anything that isn't a plausible single-expression `{col}` template now, so
+# that day one of that wiring doesn't also become day one of a SQL
+# injection hole.
+# ---------------------------------------------------------------------------
+
+class RuleValidationError(ValueError):
+    """Raised when a learned rule's SQL template fails safety validation."""
+
+
+_BANNED_SQL_KEYWORDS = (
+    "DROP", "DELETE", "ALTER", "TRUNCATE", "INSERT", "UPDATE",
+    "GRANT", "REVOKE", "EXEC", "EXECUTE", "CREATE", "MERGE", "CALL",
+)
+_BANNED_KEYWORD_RE = re.compile(
+    r"\b(" + "|".join(_BANNED_SQL_KEYWORDS) + r")\b", re.IGNORECASE
+)
+
+
+def _validate_sql_template(field_name: str, template: str) -> None:
+    """Raise RuleValidationError if `template` looks like more than a single
+    read-only `{col}` SQL expression fragment."""
+    if not template:
+        return
+    if ";" in template:
+        raise RuleValidationError(
+            f"{field_name} may not contain ';' (no multi-statement SQL allowed)."
+        )
+    if "--" in template or "/*" in template or "*/" in template:
+        raise RuleValidationError(
+            f"{field_name} may not contain SQL comment markers ('--', '/*', '*/')."
+        )
+    match = _BANNED_KEYWORD_RE.search(template)
+    if match:
+        raise RuleValidationError(
+            f"{field_name} contains the disallowed keyword '{match.group(1).upper()}' — "
+            f"only a read-only expression using {{col}} is allowed."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +344,14 @@ class RuleBook:
 
         Returns:
             True on success, False on write failure.
+
+        Raises:
+            RuleValidationError: if pg_sql_template/sf_sql_template contain
+                anything beyond a single read-only {col} expression.
         """
+        _validate_sql_template("Source SQL template", entry.pg_sql_template)
+        _validate_sql_template("Snowflake SQL template", entry.sf_sql_template)
+
         entry.is_learned = True
         if not entry.learned_at:
             entry.learned_at = datetime.now().isoformat()

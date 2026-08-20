@@ -1,37 +1,40 @@
 # Migration Validator PoC - Python Dependencies
 
 # AI agent dependencies
-openai>=1.0.0           # DIAL uses the OpenAI-compatible API
-anthropic>=1.0.0        # Anthropic-compatible API
-python-dotenv>=1.0.0    # Load DIAL_API_KEY from .env and .env credentials
+openai          # DIAL uses the OpenAI-compatible API
+anthropic       # Anthropic-compatible API
+python-dotenv    # Load DIAL_API_KEY from .env and .env credentials
 
 # Fuzzy matching — used by the new matching pipeline
-rapidfuzz>=3.0.0        # Fast Levenshtein/token_ratio; graceful fallback to difflib if absent
+rapidfuzz       # Fast Levenshtein/token_ratio; graceful fallback to difflib if absent
 
 # Database Drivers
 # Lower bounds chosen so prebuilt wheels exist for Python 3.13/3.14 (older pins force source builds)
-psycopg2-binary>=2.9.10                     # PostgreSQL
-pyodbc>=5.2.0                               # Microsoft SQL Server
-snowflake-connector-python>=4.0.0           # Snowflake
-boto3>=1.26.0                               # AWS Athena
+psycopg2-binary       # PostgreSQL
+pyodbc                # Microsoft SQL Server
+snowflake-connector-python  # Snowflake
+boto3                 # AWS Athena
 
 # Data Processing
-pandas>=1.5.0           # DataFrame handling for validation
-pyyaml>=6.0             # YAML config file parsing
-pydantic>=2.0           # Schema validation for generated YAML configs (fail at load, not mid-run)
+pandas          # DataFrame handling for validation
+pyyaml             # YAML config file parsing
+pydantic           # Schema validation for generated YAML configs (fail at load, not mid-run)
 
 # Optional: For better JSON handling
-python-dateutil>=2.8.2
+python-dateutil
 
 # Optional: For enhanced CLI support
-click>=8.1.7
+click
+
+# Web UI (webapp/app.py) — optional, only needed to run the browser-based UI
+streamlit
 
 # Development dependencies (optional)
 # For testing
-pytest>=7.4.3
-pytest-cov>=4.1.0
+pytest
+pytest-cov
 
 # For code quality
-flake8>=6.1.0
-black>=23.12.0
-pylint>=3.0.3
+flake8
+black
+pylint
