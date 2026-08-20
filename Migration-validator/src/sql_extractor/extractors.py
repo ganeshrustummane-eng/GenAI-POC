@@ -461,21 +461,23 @@ class SnowflakeExtractor(BaseExtractor):
         self.username = username or os.getenv("SNOWFLAKE_USERNAME", "")
         self.password = password or os.getenv("SNOWFLAKE_PASSWORD", "")
 
-    def _get_connection(self):
+    def _get_connection(self, database: Optional[str] = None):
         try:
             import snowflake.connector
         except ImportError as e:
             raise ExtractionError("snowflake-connector-python required. pip install snowflake-connector-python", e)
         try:
             return snowflake.connector.connect(user=self.username, password=self.password,
-                                               account=self.account, database=self.database, login_timeout=30)
+                                               account=self.account, database=database or self.database,
+                                               login_timeout=30)
         except Exception as e:
             raise ExtractionError(f"Cannot connect to Snowflake account '{self.account}': {e}", e)
 
     def extract_columns(self, schema: str, table: str, database: Optional[str] = None) -> List[ColumnMetadata]:
         import snowflake.connector
-        conn = self._get_connection()
-        sql = self._COLUMNS_SQL.replace("{{database}}", self.database)
+        db = database or self.database
+        conn = self._get_connection(db)
+        sql = self._COLUMNS_SQL.replace("{{database}}", db)
         try:
             with conn.cursor(snowflake.connector.DictCursor) as cur:
                 cur.execute(sql, (schema.upper(), table.upper()))
@@ -483,9 +485,9 @@ class SnowflakeExtractor(BaseExtractor):
         finally:
             conn.close()
         if not rows:
-            raise ExtractionError(f"No columns found for {schema}.{table} in Snowflake '{self.database}'.")
+            raise ExtractionError(f"No columns found for {schema}.{table} in Snowflake '{db}'.")
         columns = [self._row_to_column(r) for r in rows]
-        print(f"  ✓ [Snowflake] Extracted {len(columns)} columns from {self.database}.{schema}.{table}")
+        print(f"  ✓ [Snowflake] Extracted {len(columns)} columns from {db}.{schema}.{table}")
         return columns
 
     def list_tables(self, schema: str) -> List[str]:
@@ -511,11 +513,12 @@ class SnowflakeExtractor(BaseExtractor):
         finally:
             conn.close()
 
-    def detect_primary_key(self, schema: str, table: str) -> PrimaryKeyInfo:
+    def detect_primary_key(self, schema: str, table: str, database: Optional[str] = None) -> PrimaryKeyInfo:
         import snowflake.connector
+        db = database or self.database
         try:
-            conn = self._get_connection()
-            full = f"{self.database}.{schema.upper()}.{table.upper()}"
+            conn = self._get_connection(db)
+            full = f"{db}.{schema.upper()}.{table.upper()}"
             try:
                 with conn.cursor(snowflake.connector.DictCursor) as cur:
                     cur.execute(f"SHOW PRIMARY KEYS IN TABLE {full}")

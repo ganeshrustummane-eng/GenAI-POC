@@ -26,9 +26,13 @@ NULL_PLACEHOLDER = "<<NULL>>"
 # ── Abstract base ─────────────────────────────────────────────────────────────
 
 class BaseValidationRule(ABC):
-    """Abstract base for all validation rules. Subclasses implement the two
-    _pg_expression / _sf_expression methods; the public API wraps them with
-    COALESCE(CAST(… AS TEXT/STRING), '<<NULL>>')."""
+    """Abstract base for all validation rules. No source database is optional:
+    every concrete rule MUST implement all four dialect expression methods
+    below (_pg_expression, _ms_expression, _athena_expression, _sf_expression)
+    — Python enforces this at class-definition time, since PostgreSQL, MSSQL,
+    and Athena syntax genuinely differ (e.g. TO_CHAR/::jsonb/encode() are not
+    valid MSSQL or Athena syntax). The public API wraps each dialect's
+    expression with COALESCE(CAST(… AS TEXT/STRING), '<<NULL>>')."""
 
     @property
     @abstractmethod
@@ -48,19 +52,18 @@ class BaseValidationRule(ABC):
     @abstractmethod
     def _sf_expression(self, col: str) -> str: ...
 
-    # ── MSSQL (SQL Server) source expression ─────────────────────────────
-    # Defaults to the PostgreSQL expression so rules that share identical
-    # syntax need not override it. Rules whose PG syntax is NOT valid on
-    # SQL Server (TO_CHAR, CAST AS TEXT, encode(), ::jsonb, etc.) MUST
-    # override this method with SQL-Server-compatible syntax.
-    def _ms_expression(self, col: str) -> str:
-        return self._pg_expression(col)
+    # ── MSSQL (SQL Server) source expression — REQUIRED, not optional ────
+    # PG syntax (TO_CHAR, CAST AS TEXT, encode(), ::jsonb, etc.) is often not
+    # valid on SQL Server, so every rule must supply its own MSSQL-correct
+    # expression rather than silently inheriting PostgreSQL syntax.
+    @abstractmethod
+    def _ms_expression(self, col: str) -> str: ...
 
-    # ── Athena (Trino/Presto) source expression ──────────────────────────
-    # Defaults to the PostgreSQL expression. Rules whose PG syntax differs
-    # on Athena/Trino should override this method.
-    def _athena_expression(self, col: str) -> str:
-        return self._pg_expression(col)
+    # ── Athena (Trino/Presto) source expression — REQUIRED, not optional ──
+    # Trino/Presto syntax also differs from PostgreSQL (e.g. date_format vs
+    # TO_CHAR), so every rule must supply its own Athena-correct expression.
+    @abstractmethod
+    def _athena_expression(self, col: str) -> str: ...
 
     def apply_postgresql(self, col: str, alias: Optional[str] = None) -> str:
         wrapped = self._coalesce_pg(self._pg_expression(col))
@@ -181,14 +184,6 @@ class _NoOpRule(BaseValidationRule):
     def _sf_expression(self, col: str) -> str: return f"CAST({col} AS STRING)"
     def _ms_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR(MAX))"
     def _athena_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR)"
-    def _ms_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR(MAX))"
-    def _athena_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR)"
-    def _ms_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR(MAX))"
-    def _athena_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR)"
-    def _ms_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR(MAX))"
-    def _athena_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR)"
-    def _ms_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR(MAX))"
-    def _athena_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR)"
 
 
 # ── Concrete Rules ────────────────────────────────────────────────────────────
@@ -248,6 +243,7 @@ class IntegerRule(BaseValidationRule):
     def _pg_expression(self, col: str) -> str: return f"CAST({col} AS TEXT)"
     def _sf_expression(self, col: str) -> str: return f"CAST({col} AS STRING)"
     def _ms_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR(MAX))"
+    def _athena_expression(self, col: str) -> str: return f"CAST({col} AS VARCHAR)"
 
 
 DEFAULT_DECIMAL_PLACES: int = 2

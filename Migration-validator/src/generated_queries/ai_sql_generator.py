@@ -41,6 +41,20 @@ from dataclasses import dataclass
 
 from ai_transformation.column_mapping import ColumnRuleMapping
 
+try:
+    from token_usage_analysis.token_logger import (
+        log_usage, extract_openai_usage, extract_anthropic_usage,
+    )
+except ImportError:
+    def log_usage(*args, **kwargs):  # pragma: no cover - logging is best-effort
+        pass
+
+    def extract_openai_usage(response):  # pragma: no cover
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+    def extract_anthropic_usage(response):  # pragma: no cover
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -370,6 +384,17 @@ Generate the complete SELECT query now:
                 temperature=0,
                 extra_headers={"Api-Key": self.api_key},
             )
+            usage = extract_openai_usage(response)
+            log_usage(
+                backend="dial",
+                model=self.model,
+                call_type="sql_generation",
+                context=context,
+                prompt_tokens=usage["prompt_tokens"],
+                completion_tokens=usage["completion_tokens"],
+                total_tokens=usage["total_tokens"],
+                attempt=attempt,
+            )
             return response.choices[0].message.content or ""
         except Exception as exc:
             raise AISQLGenerationError(
@@ -413,6 +438,18 @@ Generate the complete SELECT query now:
                 f"Claude API call failed for {context} "
                 f"on attempt {attempt}/{MAX_GENERATION_ATTEMPTS}: {exc}"
             ) from exc
+
+        usage = extract_anthropic_usage(response)
+        log_usage(
+            backend="claude",
+            model=self.model,
+            call_type="sql_generation",
+            context=context,
+            prompt_tokens=usage["prompt_tokens"],
+            completion_tokens=usage["completion_tokens"],
+            total_tokens=usage["total_tokens"],
+            attempt=attempt,
+        )
 
         raw = ""
         for block in response.content:

@@ -23,9 +23,9 @@ Usage
   python validate_cli.py                              ← interactive menu
   python validate_cli.py setup                        ← first-run wizard
   python validate_cli.py generate \\
-      --pg-table events --sf-table EVENTS             ← single table
+      --source-table events --sf-table EVENTS         ← single table
   python validate_cli.py generate \\
-      --pg-table events --sf-table EVENTS \\
+      --source-table events --sf-table EVENTS \\
       --model gpt-4o-mini                             ← choose model
   python validate_cli.py generate \\
       --connection-profile fms-dev                    ← use saved profile
@@ -49,9 +49,13 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# ── Ensure src/ is in path ────────────────────────────────────────────────────
+# ── Ensure src/ and the project root are in path ─────────────────────────────
+# Project root is needed so token_usage_analysis/ (real AI token/cost logging,
+# imported from src/ai/rule_planner.py and src/generated_queries/ai_sql_generator.py)
+# can be imported regardless of the current working directory.
 _SRC_DIR = Path(__file__).parent
 sys.path.insert(0, str(_SRC_DIR))
+sys.path.insert(0, str(_SRC_DIR.parent))
 
 # Windows consoles default to cp1252, which cannot encode the box-drawing and
 # arrow characters used throughout this CLI — including inside argparse help,
@@ -712,7 +716,7 @@ def cmd_generate(args):
     Validation workflow:
       Single table  : pick source → pick table → generate SQL + YAML
       Multi-table   : --source N --tables t1,t2,t3 → run pipeline per table
-      Fast-path     : --pg-table X --sf-table Y → non-interactive
+      Fast-path     : --source-table X --sf-table Y → non-interactive
 
     New flags:
       --source N          Pre-select SRC_N connection (skip interactive picker)
@@ -769,9 +773,9 @@ def cmd_generate(args):
     _head("📋  SINGLE-TABLE VALIDATION  (SQL + YAML)")
 
     # ── CLI args fast-path (non-interactive) ─────────────────────────────────
-    pg_table    = getattr(args, "pg_table",    None)
-    pg_schema   = getattr(args, "pg_schema",   None)
-    pg_database = getattr(args, "pg_database", None)
+    pg_table    = getattr(args, "source_table",    None)
+    pg_schema   = getattr(args, "source_schema",   None)
+    pg_database = getattr(args, "source_database", None)
     sf_table    = getattr(args, "sf_table",    None)
     sf_schema   = getattr(args, "sf_schema",   None)
     sf_database = getattr(args, "sf_database", None)
@@ -810,7 +814,7 @@ def cmd_generate(args):
             pg_database = pg_database or rec["database"]
             _override_source_env(rec)
         elif rec is None:
-            # --source was given but no --pg-table: need to pick table interactively
+            # --source was given but no --source-table: need to pick table interactively
             rec = _get_connection_by_index(source_index)
             if rec is None:
                 return
@@ -858,13 +862,6 @@ def cmd_generate(args):
             _seen.add(c)
             exclude_cols.append(c)
 
-    if not getattr(args, "exclude", None):
-        want_custom_excl = input(
-            "\n  Do you want to exclude any custom columns? [y/N]: "
-        ).strip().lower()
-        if want_custom_excl in ("y", "yes"):
-            exclude_cols = _select_column_exclusions(rec, pg_schema, pg_table, exclude_cols)
-
     # ── Config summary — detect active backend correctly ────────────────────
     _dial_key_chk   = os.getenv("DIAL_API_KEY", "")
     _claude_key_chk = os.getenv("CLAUDE_API_KEY", "")
@@ -896,30 +893,10 @@ def cmd_generate(args):
 """)
 
 
-    # ── Rule book review ──────────────────────────────────────────────────────
-    current_model = _rule_review_step(args, current_model)
-
-    # ── Model selection (if not passed as CLI arg) ────────────────────────────
-    if not getattr(args, "model", None):
-        change = input(
-            f"\n  Change AI model? Current: {_C.CYAN}{current_model}{_C.RESET} [y/N]: "
-        ).strip().lower()
-        if change in ("y", "yes"):
-            current_model = _select_model_interactive(current_model)
-
-    # ── Confirm ───────────────────────────────────────────────────────────────
-    confirm = input("\n  Proceed with query generation? [Y/n]: ").strip().lower()
-    if confirm in ("n", "no"):
-        _dim("Cancelled.")
-        return
-
-    # ── Layer selection ───────────────────────────────────────────────────────
-    print(f"\n  {_C.BOLD}Select data layer:{_C.RESET}")
-    print(f"    {_C.CYAN}[1]{_C.RESET}  bronze  (default)")
-    print(f"    {_C.CYAN}[2]{_C.RESET}  silver")
-    print(f"    {_C.CYAN}[3]{_C.RESET}  gold")
-    _layer_choice = input("  Layer [1]: ").strip() or "1"
-    _layer = {"1": "bronze", "2": "silver", "3": "gold"}.get(_layer_choice, "bronze")
+    # Source/target are picked above; everything else (rule book review, AI
+    # model change, layer choice) uses defaults so generation runs straight
+    # through — pass --model / --layer on the command line to override.
+    _layer = getattr(args, "layer", None) or "bronze"
     _output_dir = Path(__file__).parent.parent / "Project" / "config" / _layer
 
     # ── Run pipeline ──────────────────────────────────────────────────────────
@@ -937,7 +914,7 @@ def cmd_generate(args):
             exclude_columns=exclude_cols or None,
             output_dir=_output_dir,
         )
-        _show_output_summary(result, pg_database=pg_database)
+        _show_output_summary(result, pg_database=pg_database, source_db_type=_src_db_type)
 
     except Exception as exc:
         _err(f"Generation failed: {exc}")
@@ -949,189 +926,9 @@ def cmd_generate(args):
         sys.exit(1)
 
 
-def _run_queries_terminal(result, pg_database: str = "", mode: str = "all") -> None:
-    """
-    Execute the generated SQL queries against live databases and display
-    results in the terminal. Wraps QueryExecutor with a GenerationResult adapter.
-
-    mode="all"         — execute all 8 queries (row count + validation + null% + distinct)
-    mode="counts_only" — execute only row count queries (① and ②)
-    """
-    from generated_queries.sql_query_generator import ValidationQuerySet
-
-    qs = result.query_set
-
-    _head("🚀  EXECUTING QUERIES IN TERMINAL")
-    print()
-
-    # Describe what will run
-    queries_map = {
-        "① ROW COUNT — PostgreSQL":      ("postgresql", qs.row_count_source),
-        "② ROW COUNT — Snowflake":       ("snowflake",  qs.row_count_target),
-    }
-    if mode == "all":
-        queries_map.update({
-            "⑤ NULL % CHECK — PostgreSQL":      ("postgresql", qs.null_pct_source),
-            "⑥ NULL % CHECK — Snowflake":       ("snowflake",  qs.null_pct_target),
-            "⑦ DISTINCT COUNT — PostgreSQL":    ("postgresql", qs.distinct_count_source),
-            "⑧ DISTINCT COUNT — Snowflake":     ("snowflake",  qs.distinct_count_target),
-            "③ MAIN VALIDATION — PostgreSQL":   ("postgresql", qs.main_validation_source),
-            "④ MAIN VALIDATION — Snowflake":    ("snowflake",  qs.main_validation_target),
-        })
-
-    # ── Connect to PostgreSQL ────────────────────────────────────────────────
-    pg_conn = None
-    sf_conn = None
-    try:
-        _dim("Connecting to PostgreSQL...")
-        import psycopg2
-        import psycopg2.extras
-        pg_conn = psycopg2.connect(
-            host=os.getenv("SOURCE_HOST", "localhost"),
-            port=int(os.getenv("SOURCE_PORT", "5432")),
-            database=pg_database or os.getenv("SOURCE_DATABASE", "postgres"),
-            user=os.getenv("SOURCE_USERNAME", "postgres"),
-            password=os.getenv("SOURCE_PASSWORD", ""),
-            connect_timeout=15,
-        )
-        _ok("PostgreSQL connected")
-    except Exception as exc:
-        _err(f"PostgreSQL connection failed: {exc}")
-        _warn("Cannot execute PostgreSQL queries. Snowflake queries will still run.")
-
-    try:
-        _dim("Connecting to Snowflake...")
-        import snowflake.connector
-        sf_conn = snowflake.connector.connect(
-            account=os.getenv("SNOWFLAKE_ACCOUNT", ""),
-            database=os.getenv("SNOWFLAKE_DATABASE", ""),
-            schema=os.getenv("SNOWFLAKE_SCHEMA", ""),
-            user=os.getenv("SNOWFLAKE_USERNAME", ""),
-            password=os.getenv("SNOWFLAKE_PASSWORD", ""),
-        )
-        _ok("Snowflake connected")
-    except Exception as exc:
-        _err(f"Snowflake connection failed: {exc}")
-        _warn("Cannot execute Snowflake queries. PostgreSQL queries will still run.")
-
-    if not pg_conn and not sf_conn:
-        _err("Both connections failed. Run: python check_connections.py")
-        return
-
-    # ── Execute each query ────────────────────────────────────────────────────
-    source_count = 0
-    target_count = 0
-
-    for label, (db, sql) in queries_map.items():
-        if not sql:
-            continue
-
-        conn = pg_conn if db == "postgresql" else sf_conn
-        if not conn:
-            _warn(f"  [SKIP] {label} — {db} not connected")
-            continue
-
-        print(f"\n  {_C.BOLD}{_C.CYAN}{'─'*64}{_C.RESET}")
-        print(f"  {_C.BOLD}{label}{_C.RESET}")
-        print(f"  {_C.DIM}{'─'*64}{_C.RESET}")
-
-        try:
-            import time
-            start = time.time()
-            if db == "postgresql":
-                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                    cur.execute(sql)
-                    rows = [dict(r) for r in cur.fetchall()]
-            else:
-                cur = sf_conn.cursor(snowflake.connector.DictCursor)
-                cur.execute(sql)
-                rows = [dict(r) for r in cur.fetchall()]
-                cur.close()
-
-            elapsed = (time.time() - start) * 1000
-            _ok(f"Returned {len(rows):,} row(s) in {elapsed:.0f}ms")
-            _print_table(rows, max_rows=25)
-
-            # Capture row counts for comparison
-            # Snowflake returns uppercase column names; check both cases
-            if "① ROW COUNT" in label and rows:
-                source_count = int(
-                    rows[0].get("source_row_count") or rows[0].get("SOURCE_ROW_COUNT") or 0
-                )
-            elif "② ROW COUNT" in label and rows:
-                target_count = int(
-                    rows[0].get("target_row_count") or rows[0].get("TARGET_ROW_COUNT") or 0
-                )
-
-        except Exception as exc:
-            _err(f"Query failed: {exc}")
-            # psycopg2 leaves the connection in an aborted-transaction state
-            # after any error; rollback so the next query can still execute.
-            if db == "postgresql" and conn:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-
-    # ── Row count verdict ─────────────────────────────────────────────────────
-    if source_count or target_count:
-        print(f"\n  {'═'*64}")
-        print(f"  {_C.BOLD}ROW COUNT COMPARISON{_C.RESET}")
-        print(f"  {'─'*64}")
-        print(f"    PostgreSQL rows : {_C.GREEN}{source_count:,}{_C.RESET}")
-        print(f"    Snowflake  rows : {_C.GREEN}{target_count:,}{_C.RESET}")
-        if source_count == target_count:
-            _ok(f"Row counts MATCH ✓  ({source_count:,} rows)")
-        else:
-            diff = abs(source_count - target_count)
-            diff_pct = diff / max(source_count, 1) * 100
-            if diff_pct <= 1.0:
-                _warn(f"Row counts differ by {diff:,} ({diff_pct:.2f}%) — within 1% tolerance")
-            else:
-                _err(f"Row count MISMATCH  |  diff = {diff:,} rows ({diff_pct:.1f}%)")
-        print(f"  {'═'*64}")
-
-    # ── Disconnect ────────────────────────────────────────────────────────────
-    try:
-        if pg_conn:
-            pg_conn.close()
-    except Exception:
-        pass
-    try:
-        if sf_conn:
-            sf_conn.close()
-    except Exception:
-        pass
-
-
-def _print_table(rows: list, max_rows: int = 25) -> None:
-    """Print query results as a clean ASCII table."""
-    if not rows:
-        _dim("  (no rows returned)")
-        return
-
-    cols = list(rows[0].keys())
-    widths = {c: max(len(str(c)), max(len(str(r.get(c, ""))) for r in rows[:max_rows])) for c in cols}
-    widths = {c: min(w, 40) for c, w in widths.items()}  # cap column width at 40
-
-    top = "  ┌─" + "─┬─".join("─" * widths[c] for c in cols) + "─┐"
-    hdr = "  │ " + " │ ".join(str(c).ljust(widths[c]) for c in cols) + " │"
-    sep = "  ├─" + "─┼─".join("─" * widths[c] for c in cols) + "─┤"
-    bot = "  └─" + "─┴─".join("─" * widths[c] for c in cols) + "─┘"
-
-    print(f"{_C.DIM}{top}{_C.RESET}")
-    print(f"{_C.BOLD}{hdr}{_C.RESET}")
-    print(f"{_C.DIM}{sep}{_C.RESET}")
-    for row in rows[:max_rows]:
-        line = "  │ " + " │ ".join(str(row.get(c, ""))[:widths[c]].ljust(widths[c]) for c in cols) + " │"
-        print(line)
-    print(f"{_C.DIM}{bot}{_C.RESET}")
-    if len(rows) > max_rows:
-        _dim(f"  ... {len(rows) - max_rows:,} more rows not shown (first {max_rows} displayed)")
-
-
-def _show_output_summary(result, pg_database: str = "") -> None:
+def _show_output_summary(result, pg_database: str = "", source_db_type: str = "postgresql") -> None:
     """Pretty-print where the output files were saved, then offer to execute queries."""
+    source_label = _DB_TYPE_LABELS.get(_normalize_db_type(source_db_type), source_db_type or "Source")
     _sep("═")
     print(f"\n  {_C.BOLD}{_C.GREEN}✓  GENERATION COMPLETE{_C.RESET}")
     _sep()
@@ -1155,21 +952,6 @@ def _show_output_summary(result, pg_database: str = "") -> None:
     if getattr(result, "dynamic_suite_yaml_path", None):
         print(f"    {_C.CYAN}📋 Dynamic YAML :{_C.RESET}  {result.dynamic_suite_yaml_path}")
 
-    print(f"\n  {_C.BOLD}How to use:{_C.RESET}")
-    print(f"    ① Run ① PostgreSQL row count")
-    print(f"    ② Run ② Snowflake row count — compare with ①")
-    print(f"    ③ Run ③ PostgreSQL normalised validation query → export CSV")
-    print(f"    ④ Run ④ Snowflake normalised validation query  → export CSV")
-    print(f"    ⑤ NULL % check — PostgreSQL")
-    print(f"    ⑥ NULL % check — Snowflake — compare with ⑤")
-    print(f"    ⑦ Distinct values per column — PostgreSQL")
-    print(f"    ⑧ Distinct values per column — Snowflake")
-    print(f"    Use _count.yaml for row-count-only runners")
-    print(f"    Use _validation.yaml for full column validation runners")
-    if getattr(result, "dynamic_suite_yaml_path", None):
-        print(f"\n  {_C.BOLD}Dynamic suite (schema-aware conditional checks):{_C.RESET}")
-        print(f"    MIN/MAX, SUM (financial), DUPLICATE checks, VALUE_DIST, AI business rules")
-    _sep("═")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1325,7 +1107,7 @@ def cmd_add_rule(args):
     Interactive wizard to add a new rule to rule_book_learned.json.
     The rule is saved permanently and injected into ALL future AI prompts.
     """
-    from rule_book import rule_book, RuleEntry
+    from rule_book import rule_book, RuleEntry, RuleValidationError
 
     _banner()
     _head("➕  ADD NEW RULE TO RULE BOOK")
@@ -1403,7 +1185,13 @@ def cmd_add_rule(args):
         example=example or None,
     )
 
-    if rule_book.save_learned_rule(entry):
+    try:
+        saved = rule_book.save_learned_rule(entry)
+    except RuleValidationError as exc:
+        _err(f"Rejected: {exc}")
+        return
+
+    if saved:
         _ok(f"Rule '{rule_id}' saved to rule_book_learned.json ✓")
         _ok("It will be included in ALL future AI prompts automatically.")
         print(f"\n  {_C.DIM}File: {_SRC_DIR / 'rule_book_learned.json'}{_C.RESET}")
@@ -1699,8 +1487,8 @@ def cmd_interactive():
     {_C.MAGENTA}[c]{_C.RESET}  Connections        ← ping PostgreSQL / MS SQL Server / Athena / Snowflake
 
   ── Validation Workflows ─────────────────────────────────────────
-    {_C.GREEN}[1]{_C.RESET}  Single Table       ← pick source → pick table → generate SQL + YAML
-    {_C.GREEN}[2]{_C.RESET}  Run Tables         ← pick source → pick schema → type table names → validate all
+    {_C.GREEN}[1]{_C.RESET} Run Multiple Tables         ← pick source → pick schema → type table names → validate all
+                     (type just one table name to validate a single table)
 
   ── Exclusion Management ─────────────────────────────────────────
     {_C.YELLOW}[E]{_C.RESET}  Global Exclusions  ← add columns excluded from ALL tables, source & target"""
@@ -1708,14 +1496,14 @@ def cmd_interactive():
     f"""
 
   ── Tools ────────────────────────────────────────────────────────
-    {_C.CYAN}[3]{_C.RESET}  List tables        ← show tables in all configured databases
-    {_C.CYAN}[4]{_C.RESET}  Select AI model"""
+    {_C.CYAN}[2]{_C.RESET}  List tables        ← show tables in all configured databases
+    {_C.CYAN}[3]{_C.RESET}  Select AI model"""
     + ai_badge +
     f"""
-    {_C.CYAN}[5]{_C.RESET}  View rule book
-    {_C.CYAN}[6]{_C.RESET}  Add custom rule
-    {_C.CYAN}[7]{_C.RESET}  List available AI models
-    {_C.CYAN}[8]{_C.RESET}  Configure API key  ← set/change DIAL or Claude API key in .env
+    {_C.CYAN}[4]{_C.RESET}  View rule book
+    {_C.CYAN}[5]{_C.RESET}  Add custom rule
+    {_C.CYAN}[6]{_C.RESET}  List available AI models
+    {_C.CYAN}[7]{_C.RESET}  Configure API key  ← set/change DIAL or Claude API key in .env
     {_C.DIM}[q]{_C.RESET}  Quit
 """)
 
@@ -1724,13 +1512,11 @@ def cmd_interactive():
 
     if choice in ("c", "conn", "connections"):
         cmd_connections(ns)
-    elif choice in ("1", "generate", "single"):
-        cmd_generate(ns)
-    elif choice in ("2", "multiple", "tables", "run"):
+    elif choice in ("1", "multiple", "tables", "run"):
         cmd_multi_db(ns)
-    elif choice in ("3", "list-tables", "list"):
+    elif choice in ("2", "list-tables", "list"):
         cmd_list_tables(ns)
-    elif choice in ("4", "model", "select-model"):
+    elif choice in ("3", "model", "select-model"):
         # Read the correct current model depending on active backend
         _dk = os.getenv("DIAL_API_KEY", "")
         _ck = os.getenv("CLAUDE_API_KEY", "")
@@ -1748,20 +1534,20 @@ def cmd_interactive():
             os.environ["DIAL_MODEL"] = new_model
             _ok(f"DIAL model set to '{new_model}' for this session.")
             _dim("To persist: update DIAL_MODEL in your .env file.")
-    elif choice in ("5", "rules"):
+    elif choice in ("4", "rules"):
         cmd_rules(ns)
-    elif choice in ("6", "add-rule", "add"):
+    elif choice in ("5", "add-rule", "add"):
         cmd_add_rule(ns)
-    elif choice in ("7", "list-models", "models"):
+    elif choice in ("6", "list-models", "models"):
         _list_models_cmd()
     elif choice in ("e", "exclusion", "exclusions", "add-exclusion"):
         cmd_add_exclusion(ns)
-    elif choice in ("8", "api-key", "configure-api", "apikey"):
+    elif choice in ("7", "api-key", "configure-api", "apikey"):
         cmd_configure_api_key(ns)
     elif choice in ("q", "quit", "exit"):
         _dim("Bye!")
     else:
-        _warn(f"Unknown choice '{choice}'. Please enter 1-8, c, e, or q.")
+        _warn(f"Unknown choice '{choice}'. Please enter 1-7, c, e, or q.")
 
 
 def _pick_source_connection() -> Optional[dict]:
@@ -2744,8 +2530,8 @@ def _run_parameterized_tables(args, current_model: str, exclude_cols: list) -> N
 
     tables_raw   = getattr(args, "tables", "") or ""
     source_index = getattr(args, "source_index", None)
-    pg_schema    = getattr(args, "pg_schema",   None)
-    pg_database  = getattr(args, "pg_database", None)
+    pg_schema    = getattr(args, "source_schema",   None)
+    pg_database  = getattr(args, "source_database", None)
     sf_schema    = getattr(args, "sf_schema",   None)
     sf_database  = getattr(args, "sf_database", None)
 
@@ -2957,13 +2743,13 @@ def _run_parameterized_interactive(args) -> None:
 
     current_model = os.getenv("DIAL_MODEL", "gpt-4o")
 
-    args.tables       = tables_raw
-    args.source_index = None
-    args.pg_schema    = None
-    args.pg_database  = None
-    args.sf_schema    = None
-    args.sf_database  = None
-    args.model        = None
+    args.tables          = tables_raw
+    args.source_index    = None
+    args.source_schema   = None
+    args.source_database = None
+    args.sf_schema       = None
+    args.sf_database     = None
+    args.model           = None
 
     _run_parameterized_tables(args, current_model, exclude_cols)
 
@@ -3211,10 +2997,10 @@ def cmd_multi_db(args):
     _override_source_env(rec)
 
     # ── B: Pick database then schema ──────────────────────────────────────────
-    pg_database_arg = getattr(args, "pg_database", None) or ""
+    pg_database_arg = getattr(args, "source_database", None) or ""
     if not pg_database_arg:
         _pick_database_from_source(rec)   # updates rec["database"] in-place
-    schema = getattr(args, "pg_schema", None) or _pick_schema_from_source(rec)
+    schema = getattr(args, "source_schema", None) or _pick_schema_from_source(rec)
     if not schema:
         _err("No schema selected.")
         return
@@ -3552,7 +3338,7 @@ def cmd_lint(args):
 
     if not results:
         _warn("No YAML config files found. Generate some first:")
-        _dim("python src/validate_cli.py generate --pg-table <t> --sf-table <T>")
+        _dim("python src/validate_cli.py generate --source-table <t> --sf-table <T>")
         sys.exit(0)
 
     total_errors = 0
@@ -3682,8 +3468,8 @@ First time? Run the setup wizard:
   python validate_cli.py setup
 
 Single table:
-  python validate_cli.py generate --pg-database fms --pg-table events --sf-table EVENTS
-  python validate_cli.py generate --pg-table events --sf-table EVENTS --model gpt-4o
+  python validate_cli.py generate --source-database fms --source-table events --sf-table EVENTS
+  python validate_cli.py generate --source-table events --sf-table EVENTS --model gpt-4o
 
 Multiple tables:
   python validate_cli.py batch --config tables.yaml
@@ -3716,9 +3502,9 @@ Utilities:
         "generate",
         help="Generate SQL + YAML validation files (full workflow)",
     )
-    gen.add_argument("--pg-database", dest="pg_database", default=None, help="PostgreSQL/source database name (overrides SOURCE_DATABASE in .env)")
-    gen.add_argument("--pg-schema",   dest="pg_schema",   default=None, help="Source schema")
-    gen.add_argument("--pg-table",    dest="pg_table",    default=None, help="Source table (single table mode)")
+    gen.add_argument("--source-database", dest="source_database", default=None, help="Source database name — PostgreSQL/MSSQL/Athena (overrides SOURCE_DATABASE in .env)")
+    gen.add_argument("--source-schema",   dest="source_schema",   default=None, help="Source schema")
+    gen.add_argument("--source-table",    dest="source_table",    default=None, help="Source table (single table mode)")
     gen.add_argument("--sf-schema",   dest="sf_schema",   default=None, help="Snowflake schema")
     gen.add_argument("--sf-table",    dest="sf_table",    default=None, help="Snowflake table")
     gen.add_argument("--sf-database", dest="sf_database", default=None, help="Snowflake database")
@@ -3758,6 +3544,13 @@ Utilities:
         help="Use a saved connection profile (skips all interactive pickers). "
              "Run 'profiles' to see available profiles.",
     )
+    gen.add_argument(
+        "--layer",
+        dest="layer",
+        default=None,
+        choices=("bronze", "silver", "gold"),
+        help="Medallion layer — output folder for the generated config (default: bronze).",
+    )
 
     # ── multi ─────────────────────────────────────────────────────────────────
     mlt = sub.add_parser(
@@ -3766,7 +3559,7 @@ Utilities:
     )
     mlt.add_argument("--source", "-s", dest="source_index", type=int, default=None,
                      metavar="N", help="Pre-select SRC_N connection (skips interactive picker)")
-    mlt.add_argument("--schema", dest="pg_schema", default=None, metavar="SCHEMA",
+    mlt.add_argument("--schema", dest="source_schema", default=None, metavar="SCHEMA",
                      help="Source schema (skips interactive picker)")
     mlt.add_argument("--tables", dest="tables", default=None, metavar="T1,T2,...",
                      help="Comma-separated table names (skips interactive picker)")
