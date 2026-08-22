@@ -279,6 +279,7 @@ class ValidationPipeline:
         pg_database: Optional[str] = None,
         explicit_mappings: Optional[dict] = None,
         exclude_columns: Optional[List[str]] = None,
+        source_db_type: Optional[str] = None,
         output_dir: Optional[Path] = None,
     ) -> "tuple[GenerationResult, CanonicalValidationPlan]":
         """
@@ -302,98 +303,27 @@ class ValidationPipeline:
             pg_database      : PostgreSQL database name
             explicit_mappings: Optional {src_col: tgt_col} override dict
             exclude_columns  : Column names to skip (case-insensitive)
+            source_db_type   : Source database type (e.g. 'postgresql', 'mssql')
+                               (default: SOURCE_TYPE env var)
 
         Returns:
             (GenerationResult, CanonicalValidationPlan) tuple
         """
         _sf_db = sf_database or os.getenv("SNOWFLAKE_DATABASE", "")
         _pg_db = pg_database or os.getenv("SOURCE_DATABASE", "")
+        _src_db_type = source_db_type or os.getenv("SOURCE_TYPE", "postgresql")
 
         _print_header_v2(pg_schema, pg_table, _sf_db, sf_schema, sf_table, self, _pg_db)
 
-        # ── Step 1: Extract schemas + PK detection ───────────────────────────
-        print("\n[1/7] Extracting schemas from source and target databases...")
-        src_columns = self._extract_source(pg_schema, pg_table, _pg_db)
-        tgt_columns = self._extract_target(sf_schema, sf_table, _sf_db)
-
-        # ── Column exclusion ─────────────────────────────────────────────────
-        if exclude_columns:
-            excl_upper = {c.upper() for c in exclude_columns}
-            before = len(src_columns)
-            src_columns = [c for c in src_columns if c.column_name.upper() not in excl_upper]
-            dropped = before - len(src_columns)
-            if dropped:
-                print(f"  ℹ  Column exclusion: removed {dropped} column(s) — {', '.join(exclude_columns)}")
-
-        has_fivetran_active = SnowflakeExtractor.has_fivetran_active(tgt_columns)
-        if has_fivetran_active:
-            print(f"  ℹ  Fivetran _FIVETRAN_ACTIVE detected — Snowflake queries will filter active records.")
-        src_type_lbl = os.getenv("SOURCE_TYPE", "source").upper()
-        print(f"  {src_type_lbl}: {len(src_columns)} columns  |  Snowflake: {len(tgt_columns)} columns")
-
-        # PK detection (non-fatal — logs warning on failure)
-        src_pk = self._src_extractor.detect_primary_key(pg_schema, pg_table)
-        tgt_pk = self._sf_extractor.detect_primary_key(sf_schema, sf_table, database=_sf_db or None)
-
-        if not src_pk.has_pk:
-            print(f"  ⚠ No PK found on source {pg_schema}.{pg_table} — duplicate/missing row checks will be skipped.")
-
-        # ── Steps 2-4: Deterministic matching ────────────────────────────────
-        print("\n[2-4/7] Running exact + fuzzy + confidence-scoring matching pipeline...")
-        retriever = LearnedRuleRetriever()
-        learned   = retriever.all_examples()
-        learned_dicts = [ex.to_dict() for ex in learned]
-
-        matcher   = CandidateMatcher()
-        decisions = matcher.match(
-            source_columns=src_columns,
-            target_columns=tgt_columns,
-            explicit_mappings=explicit_mappings,
-            learned_examples=learned_dicts,
+        (
+            src_columns, tgt_columns, final_decisions, has_fivetran_active,
+            src_pk, tgt_pk, ai_calls_made, ai_decision_map,
+        ) = self._match_columns(
+            pg_schema=pg_schema, pg_table=pg_table, sf_schema=sf_schema, sf_table=sf_table,
+            sf_database=_sf_db, pg_database=_pg_db,
+            explicit_mappings=explicit_mappings, exclude_columns=exclude_columns,
+            step_label="2-4/7", ai_step_label="5/7",
         )
-
-        resolved  = [d for d in decisions if d.is_resolved and not d.skip_validation]
-        ai_needed = [d for d in decisions if d.needs_ai]
-        skipped   = [d for d in decisions if d.skip_validation]
-
-        print(f"  Exact/fuzzy resolved : {len(resolved)}")
-        print(f"  Need AI review       : {len(ai_needed)}")
-        print(f"  Skipped              : {len(skipped)}")
-
-        # ── Step 5: AI for ambiguous only ────────────────────────────────────
-        ai_calls_made    = 0
-        ai_decision_map  = {}
-
-        if ai_needed and self._rule_mapper.is_ai_active:
-            print(f"\n[5/7] Sending {len(ai_needed)} ambiguous column(s) to AI...")
-            planner = RulePlanner(
-                api_key=os.getenv("DIAL_API_KEY", ""),
-                model=self._rule_mapper.active_model,
-            )
-            planner_result = planner.resolve(
-                ai_needed_decisions=ai_needed,
-                table_name=pg_table,
-                learned_examples=learned_dicts,
-            )
-            # Replace ai_needed decisions with planner's resolved decisions
-            resolved_names  = {d.source_col.column_name for d in resolved}
-            ai_resolved_map = {d.source_col.column_name: d for d in planner_result.decisions}
-
-            decisions = []
-            for orig in [d for d in matcher.match(src_columns, tgt_columns, explicit_mappings, learned_dicts)]:
-                name = orig.source_col.column_name
-                if name in ai_resolved_map:
-                    decisions.append(ai_resolved_map[name])
-                else:
-                    decisions.append(orig)
-
-            ai_calls_made   = planner_result.ai_calls_made
-            ai_decision_map = planner_result.ai_decisions
-            print(f"  AI calls made: {ai_calls_made}")
-        elif ai_needed:
-            print(f"\n[5/7] No DIAL_API_KEY — accepting best fuzzy for {len(ai_needed)} ambiguous column(s).")
-        else:
-            print(f"\n[5/7] No ambiguous columns — AI not needed.")
 
         # ── Build CanonicalValidationPlan ─────────────────────────────────────
         from rules import get_rule_for_type as _get_rule
@@ -402,9 +332,6 @@ class ValidationPipeline:
         plan_mappings: List[ColumnMappingEntry] = []
         unmatched_src: List[str] = []
         ambiguities:   List[str] = []
-
-        # Re-run final decisions (with AI results merged)
-        final_decisions = decisions
 
         for dec in final_decisions:
             src = dec.source_col
@@ -561,9 +488,167 @@ class ValidationPipeline:
 
         return result, plan
 
+    def preview_mapping(
+        self,
+        pg_schema: str,
+        pg_table: str,
+        sf_schema: str,
+        sf_table: str,
+        sf_database: Optional[str] = None,
+        pg_database: Optional[str] = None,
+        explicit_mappings: Optional[dict] = None,
+        exclude_columns: Optional[List[str]] = None,
+    ) -> List[dict]:
+        """
+        Run schema extraction + matching (exact/fuzzy/AI) WITHOUT generating
+        any SQL/YAML output, so the resulting source→target column mapping
+        can be reviewed and corrected by a human before anything is written.
+
+        This exists because the AI mapper can flag a column as "unmapped" or
+        low-confidence even when a rename is actually correct (e.g. source
+        'customer' -> target 'user'), and conversely can auto-accept a wrong
+        guess. The UI shows every column with how it was matched so a human
+        can override before generation runs.
+
+        Args:
+            (same as run_with_plan)
+
+        Returns:
+            List of dicts, one per source column, each with:
+              source_column, source_type, target_column, target_type,
+              match_method, confidence, status, skip_validation, skip_reason
+        """
+        _sf_db = sf_database or os.getenv("SNOWFLAKE_DATABASE", "")
+        _pg_db = pg_database or os.getenv("SOURCE_DATABASE", "")
+
+        src_columns, tgt_columns, final_decisions, *_ = self._match_columns(
+            pg_schema=pg_schema, pg_table=pg_table, sf_schema=sf_schema, sf_table=sf_table,
+            sf_database=_sf_db, pg_database=_pg_db,
+            explicit_mappings=explicit_mappings, exclude_columns=exclude_columns,
+            step_label="preview", ai_step_label="preview",
+        )
+
+        rows: List[dict] = []
+        for dec in final_decisions:
+            rows.append({
+                "source_column": dec.source_col.column_name,
+                "source_type": dec.source_col.data_type,
+                "target_column": dec.target_col.column_name if dec.target_col else "",
+                "target_type": dec.target_col.data_type if dec.target_col else "",
+                "match_method": dec.method or ("skip" if dec.skip_validation else "unmatched"),
+                "confidence": round(dec.final_score, 3),
+                "status": dec.status,
+                "skip_validation": dec.skip_validation,
+                "skip_reason": dec.skip_reason,
+            })
+        return rows
+
     # -----------------------------------------------------------------------
     # Private helpers
     # -----------------------------------------------------------------------
+
+    def _match_columns(
+        self,
+        pg_schema: str,
+        pg_table: str,
+        sf_schema: str,
+        sf_table: str,
+        sf_database: str,
+        pg_database: str,
+        explicit_mappings: Optional[dict],
+        exclude_columns: Optional[List[str]],
+        step_label: str = "2-4",
+        ai_step_label: str = "5",
+    ):
+        """
+        Shared matching core used by both run_with_plan() and preview_mapping():
+        extract schemas, run exact/fuzzy/confidence matching, then send only
+        the ambiguous columns to AI. Kept in one place so preview and actual
+        generation can never disagree about how a column was matched.
+
+        Returns:
+            (src_columns, tgt_columns, final_decisions, has_fivetran_active,
+             src_pk, tgt_pk, ai_calls_made, ai_decision_map)
+        """
+        src_columns = self._extract_source(pg_schema, pg_table, pg_database)
+        tgt_columns = self._extract_target(sf_schema, sf_table, sf_database)
+
+        if exclude_columns:
+            excl_upper = {c.upper() for c in exclude_columns}
+            before = len(src_columns)
+            src_columns = [c for c in src_columns if c.column_name.upper() not in excl_upper]
+            dropped = before - len(src_columns)
+            if dropped:
+                print(f"  ℹ  Column exclusion: removed {dropped} column(s) — {', '.join(exclude_columns)}")
+
+        has_fivetran_active = SnowflakeExtractor.has_fivetran_active(tgt_columns)
+        if has_fivetran_active:
+            print(f"  ℹ  Fivetran _FIVETRAN_ACTIVE detected — Snowflake queries will filter active records.")
+        src_type_lbl = os.getenv("SOURCE_TYPE", "source").upper()
+        print(f"  {src_type_lbl}: {len(src_columns)} columns  |  Snowflake: {len(tgt_columns)} columns")
+
+        src_pk = self._src_extractor.detect_primary_key(pg_schema, pg_table)
+        tgt_pk = self._sf_extractor.detect_primary_key(sf_schema, sf_table, database=sf_database or None)
+
+        if not src_pk.has_pk:
+            print(f"  ⚠ No PK found on source {pg_schema}.{pg_table} — duplicate/missing row checks will be skipped.")
+
+        print(f"\n[{step_label}] Running exact + fuzzy + confidence-scoring matching pipeline...")
+        retriever = LearnedRuleRetriever()
+        learned   = retriever.all_examples()
+        learned_dicts = [ex.to_dict() for ex in learned]
+
+        matcher   = CandidateMatcher()
+        decisions = matcher.match(
+            source_columns=src_columns,
+            target_columns=tgt_columns,
+            explicit_mappings=explicit_mappings,
+            learned_examples=learned_dicts,
+        )
+
+        resolved  = [d for d in decisions if d.is_resolved and not d.skip_validation]
+        ai_needed = [d for d in decisions if d.needs_ai]
+        skipped   = [d for d in decisions if d.skip_validation]
+
+        print(f"  Exact/fuzzy resolved : {len(resolved)}")
+        print(f"  Need AI review       : {len(ai_needed)}")
+        print(f"  Skipped              : {len(skipped)}")
+
+        ai_calls_made    = 0
+        ai_decision_map  = {}
+
+        if ai_needed and self._rule_mapper.is_ai_active:
+            print(f"\n[{ai_step_label}] Sending {len(ai_needed)} ambiguous column(s) to AI...")
+            planner = RulePlanner(
+                api_key=os.getenv("DIAL_API_KEY", ""),
+                model=self._rule_mapper.active_model,
+            )
+            planner_result = planner.resolve(
+                ai_needed_decisions=ai_needed,
+                table_name=pg_table,
+                learned_examples=learned_dicts,
+            )
+            ai_resolved_map = {d.source_col.column_name: d for d in planner_result.decisions}
+
+            final_decisions = []
+            for orig in matcher.match(src_columns, tgt_columns, explicit_mappings, learned_dicts):
+                name = orig.source_col.column_name
+                final_decisions.append(ai_resolved_map.get(name, orig))
+
+            ai_calls_made   = planner_result.ai_calls_made
+            ai_decision_map = planner_result.ai_decisions
+            print(f"  AI calls made: {ai_calls_made}")
+        elif ai_needed:
+            print(f"\n[{ai_step_label}] No DIAL_API_KEY — accepting best fuzzy for {len(ai_needed)} ambiguous column(s).")
+            final_decisions = decisions
+        else:
+            print(f"\n[{ai_step_label}] No ambiguous columns — AI not needed.")
+            final_decisions = decisions
+
+        return (
+            src_columns, tgt_columns, final_decisions, has_fivetran_active,
+            src_pk, tgt_pk, ai_calls_made, ai_decision_map,
+        )
 
     def _extract_source(self, schema: str, table: str, database: str = ""):
         """Extract source column metadata. Raises on failure."""
