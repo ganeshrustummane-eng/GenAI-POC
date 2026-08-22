@@ -109,6 +109,8 @@ class YAMLConfigWriter:
         mappings: List[ColumnRuleMapping],
         has_fivetran_active: bool = False,
         output_dir: Optional[Path] = None,
+        source_audit_column: str = "",
+        target_audit_column: str = "",
     ) -> Path:
         """
         Write the data validation YAML for a single table.
@@ -132,6 +134,8 @@ class YAMLConfigWriter:
             mappings           : Active ColumnRuleMapping list
             has_fivetran_active: True → WHERE _FIVETRAN_ACTIVE = TRUE on SF side
             output_dir         : Override output dir (default: config/bronze/data_validation/)
+            source_audit_column: Optional source-side audit column name (blank by default)
+            target_audit_column: Optional target-side audit column name (blank by default)
 
         Returns:
             Path to the written YAML file.
@@ -166,6 +170,8 @@ class YAMLConfigWriter:
             generated_at=query_set.generated_at,
             generated_by=query_set.generated_by,
             model_used=query_set.model_used,
+            source_audit_column=source_audit_column,
+            target_audit_column=target_audit_column,
         )
 
         yaml_path = out_dir / f"{pg_table}.yaml"
@@ -189,7 +195,7 @@ class YAMLConfigWriter:
     ) -> Path:
         """
         Upsert this table's count_validation block into the shared
-        config/bronze/count_validation/bronze.yaml.
+        config/<layer>/count_validation/<layer>.yaml.
 
         Idempotent by construction: the existing file is parsed, this table's
         key is replaced (not appended), and the whole document is rewritten.
@@ -200,11 +206,12 @@ class YAMLConfigWriter:
         meant the file silently disagreed with itself about what would run.
 
         Returns:
-            Path to the bronze.yaml file.
+            Path to the <layer>.yaml file.
         """
         out_dir = (output_dir or _BRONZE_CONFIG_DIR) / "count_validation"
         out_dir.mkdir(parents=True, exist_ok=True)
-        yaml_path = out_dir / "bronze.yaml"
+        layer = out_dir.parent.name or "bronze"
+        yaml_path = out_dir / f"{layer}.yaml"
 
         block = {
             "validations": {
@@ -226,8 +233,8 @@ class YAMLConfigWriter:
 
         header = [
             "# ============================================================",
-            "# Migration Validator — Bronze Count Validation",
-            "# Contains   : row count checks for all Bronze tables.",
+            f"# Migration Validator — {layer.capitalize()} Count Validation",
+            f"# Contains   : row count checks for all {layer.capitalize()} tables.",
             "#",
             "# GENERATED FILE — do not hand-edit.",
             "# Rendered from the canonical validation plans in output/plans/.",
@@ -323,6 +330,8 @@ def _build_data_yaml(
     generated_at: str,
     generated_by: str,
     model_used: str,
+    source_audit_column: str = "",
+    target_audit_column: str = "",
 ) -> str:
     """
     Build the data validation YAML for one table (no row count block).
@@ -384,11 +393,13 @@ def _build_data_yaml(
         f"        source_table_name: {table_name_source}",
         f"        source: {source_db_type}",
         f"        pksourcecolumn: {source_column + '_normalized' if source_column else ''}",
+        f"        source_audit_column: {source_audit_column}",
         "        sourcequery: |",
         data_source_yaml,
         f"        target_table_name: {table_name_target}",
         "        target: snowflake",
         f"        pktargetcolumn: {target_column + '_normalized' if target_column else ''}",
+        f"        target_audit_column: {target_audit_column}",
         "        targetquery: |",
         data_target_yaml,
         "",

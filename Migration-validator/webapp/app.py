@@ -51,12 +51,32 @@ from sql_extractor import ExtractorFactory, SnowflakeExtractor
 from rule_book import rule_book, RuleEntry, RuleValidationError
 from ai_transformation.ai_rule_mapper import AVAILABLE_MODELS, MODEL_DESCRIPTIONS
 from model_probe import get_working_models
+from learning.feedback import FeedbackRecorder, MismatchFeedback
 import mapping_store
 
 sys.path.insert(0, str(_ROOT_DIR / "token_usage_analysis"))
 from report_token_usage import _load_records as _load_token_records, _load_pricing, _cost_for
 
-st.set_page_config(page_title="Migration Validator", page_icon="🔄", layout="wide")
+st.set_page_config(page_title="Migration Validator", layout="wide")
+
+st.markdown("""
+<style>
+[data-testid="stTab"] {
+    padding: 0.9rem 1.4rem !important;
+}
+[data-testid="stTab"] p {
+    font-size: 1.08rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.01rem;
+}
+[data-testid="stTab"][aria-selected="true"] p {
+    color: #6C5CE7 !important;
+}
+[data-testid="stTab"][aria-selected="true"] {
+    border-bottom: 3px solid #6C5CE7 !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 st.markdown("""
 <style>
@@ -162,6 +182,19 @@ def cached_sf_schemas(account, database, username, password, warehouse, role):
 @st.cache_data(ttl=300, show_spinner="Loading Snowflake tables…")
 def cached_sf_tables(database, schema):
     return SnowflakeExtractor(database=database).list_tables(schema)
+
+
+@st.cache_data(ttl=300, show_spinner="Loading Snowflake columns…")
+def cached_sf_columns(database, schema, table):
+    return [c.column_name for c in SnowflakeExtractor(database=database).extract_columns(schema, table)]
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_sf_column_types(database, schema, table):
+    """{column_name: data_type} for the Snowflake target — used to fill in the
+    target type when persisting a human-corrected column mapping as a learned
+    example (see render_mapping_review save button)."""
+    return {c.column_name: c.data_type for c in SnowflakeExtractor(database=database).extract_columns(schema, table)}
 
 
 # ---------------------------------------------------------------------------
@@ -328,12 +361,147 @@ def pick_snowflake_target(default_table: str, key_prefix: str):
     return sf_database, sf_schema, sf_table
 
 
+def render_mapping_review(
+    pipeline,
+    pg_schema: str, pg_table: str, sf_schema: str, sf_table: str,
+    sf_database: str, pg_database: str,
+    exclude_columns: list, key_prefix: str,
+) -> dict:
+    """
+    Preview the source→target COLUMN mapping the AI/fuzzy matcher would use,
+    and let a human correct it before anything is generated.
+
+    The AI mapper can flag a rename as a mismatch even when it's correct
+    (e.g. source 'customer' -> target 'user'), and can just as easily auto-
+    accept a wrong guess. This grid shows exactly how every column was
+    matched (method + confidence) so a human can fix it either way — for a
+    single table or, called once per table, for a batch run.
+
+    Returns:
+        {source_column: corrected_target_column} for every row the human
+        edited away from the AI/fuzzy suggestion. Empty dict if nothing was
+        previewed or nothing was changed — callers pass this straight in as
+        explicit_mappings, so an empty dict behaves exactly like "no override".
+    """
+    rows_key = f"{key_prefix}_mapping_rows"
+    sig_key = f"{key_prefix}_mapping_sig"
+    sig = (pg_schema, pg_table, sf_schema, sf_table, sf_database, pg_database, tuple(sorted(exclude_columns or [])))
+
+    if st.button("🔍 Preview column mapping", key=f"{key_prefix}_preview_btn"):
+        with st.spinner(f"Matching columns for {pg_table} → {sf_table} ..."):
+            try:
+                st.session_state[rows_key] = pipeline.preview_mapping(
+                    pg_schema=pg_schema, pg_table=pg_table,
+                    sf_schema=sf_schema, sf_table=sf_table,
+                    sf_database=sf_database, pg_database=pg_database,
+                    exclude_columns=exclude_columns,
+                )
+                st.session_state[sig_key] = sig
+            except Exception as exc:
+                st.error(f"Column mapping preview failed: {exc}")
+                st.session_state.pop(rows_key, None)
+
+    rows = st.session_state.get(rows_key)
+    if rows is None or st.session_state.get(sig_key) != sig:
+        st.caption(
+            "Not previewed yet — click above to see how each source column was matched "
+            "to a target column, and correct any that are wrong."
+        )
+        return {}
+
+    try:
+        live_tgt_cols = cached_sf_columns(sf_database, sf_schema, sf_table)
+    except Exception:
+        live_tgt_cols = []
+
+    import pandas as pd
+    df = pd.DataFrame([{
+        "Source Column": r["source_column"],
+        "Source Type": r["source_type"],
+        "AI/Fuzzy Target": r["target_column"],
+        "Corrected Target": r["target_column"],
+        "Matched By": "skip" if r["skip_validation"] else r["match_method"],
+        "Confidence": r["confidence"],
+    } for r in rows])
+
+    target_options = sorted(set(live_tgt_cols) | {r["target_column"] for r in rows if r["target_column"]})
+
+    edited = st.data_editor(
+        df,
+        column_config={
+            "Source Column": st.column_config.TextColumn(disabled=True),
+            "Source Type": st.column_config.TextColumn(disabled=True),
+            "AI/Fuzzy Target": st.column_config.TextColumn(
+                disabled=True, help="What the AI/fuzzy matcher picked — kept for comparison.",
+            ),
+            "Corrected Target": st.column_config.SelectboxColumn(
+                options=target_options + [""],
+                help="Override the mapping if it's wrong in either direction — the mapper "
+                     "may have missed a valid rename (e.g. 'customer' -> 'user') or accepted a wrong guess.",
+            ),
+            "Matched By": st.column_config.TextColumn(disabled=True),
+            "Confidence": st.column_config.NumberColumn(disabled=True, format="%.2f"),
+        },
+        hide_index=True,
+        width='stretch',
+        key=f"{key_prefix}_mapping_editor",
+    )
+
+    unmatched = [r["source_column"] for r in rows if not r["skip_validation"] and not r["target_column"]]
+    low_conf = [r["source_column"] for r in rows if not r["skip_validation"] and r["target_column"] and r["confidence"] < 0.75]
+    if unmatched:
+        st.warning(f"No target match for: {', '.join(unmatched)} — pick one above or it will be skipped from validation.")
+    if low_conf:
+        st.info(f"Matched below high confidence: {', '.join(low_conf)} — review these; a flagged mismatch can still be correct.")
+
+    overrides = {
+        row["Source Column"]: row["Corrected Target"]
+        for _, row in edited.iterrows()
+        if row["Corrected Target"] and row["Corrected Target"] != row["AI/Fuzzy Target"]
+    }
+    if overrides:
+        st.success(
+            f"{len(overrides)} correction(s) will be forced onto the mapping: "
+            + ", ".join(f"{k} → {v}" for k, v in overrides.items())
+        )
+        if st.button("💾 Remember these corrections for future runs", key=f"{key_prefix}_save_corrections"):
+            try:
+                tgt_types = cached_sf_column_types(sf_database, sf_schema, sf_table)
+            except Exception:
+                tgt_types = {}
+            src_type_by_col = {r["source_column"]: r["source_type"] for r in rows}
+
+            def _rule_id_for(src_type: str, tgt_type: str) -> str:
+                from rules import get_rule_for_type
+                try:
+                    return get_rule_for_type(src_type, tgt_type).rule_name
+                except Exception:
+                    return "text"
+
+            recorder = FeedbackRecorder()
+            saved = recorder.record_batch([
+                MismatchFeedback(
+                    source_column=src_col,
+                    target_column=corrected_tgt,
+                    source_type=src_type_by_col.get(src_col, ""),
+                    target_type=tgt_types.get(corrected_tgt, ""),
+                    correct_rule=_rule_id_for(src_type_by_col.get(src_col, ""), tgt_types.get(corrected_tgt, "")),
+                    reason="Corrected via webapp column mapping review",
+                    table_name=pg_table,
+                    was_ai_decision=True,
+                )
+                for src_col, corrected_tgt in overrides.items()
+            ])
+            st.success(f"Saved {saved} correction(s) to rule_book_learned.json — future runs will recognize them.")
+    return overrides
+
+
 # ---------------------------------------------------------------------------
 # Sidebar — environment status, always visible regardless of active tab
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
-    st.markdown("### 🔄 Migration Validator")
+    st.markdown("### Migration Validator")
 
     _dial_key = os.getenv("DIAL_API_KEY", "")
     _claude_key = os.getenv("CLAUDE_API_KEY", "")
@@ -366,7 +534,7 @@ with st.sidebar:
 # Page
 # ---------------------------------------------------------------------------
 
-st.title("🔄 Migration Validator")
+st.title("Migration Validator")
 st.caption("PostgreSQL / MSSQL / Athena → Snowflake — pick everything from live dropdowns, powered by the credentials already in .env.")
 
 tab_conn, tab_single, tab_batch, tab_rules, tab_excl, tab_usage = st.tabs(
@@ -476,6 +644,20 @@ with tab_single:
         )
         layer, output_dir = pick_layer("single_layer")
 
+        column_overrides = {}
+        if source_table and sf_table:
+            st.markdown("**④ Column mapping — review before generating**")
+            extractor = ExtractorFactory.create(
+                src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
+                database=database, username=rec["username"], password=source_password(rec),
+                auth=rec.get("auth", ""), s3_output=rec.get("s3_output", ""),
+            )
+            preview_pipeline = ValidationPipeline(model=model, source_extractor=extractor)
+            column_overrides = render_mapping_review(
+                preview_pipeline, schema, source_table, sf_schema, sf_table,
+                sf_database, database, excluded_cols, key_prefix="single",
+            )
+
         if st.button("▶️ Generate SQL + YAML", type="primary", key="single_generate"):
             if not source_table or not sf_table:
                 st.error("Source table and Snowflake table are required.")
@@ -488,13 +670,14 @@ with tab_single:
                             auth=rec.get("auth", ""), s3_output=rec.get("s3_output", ""),
                         )
                         pipeline = ValidationPipeline(model=model, source_extractor=extractor)
-                        result = pipeline.run(
+                        result, _plan = pipeline.run_with_plan(
                             pg_schema=schema,
                             pg_table=source_table,
                             sf_schema=sf_schema,
                             sf_table=sf_table,
                             sf_database=sf_database,
                             pg_database=database,
+                            explicit_mappings=column_overrides or None,
                             exclude_columns=excluded_cols or None,
                             source_db_type=src_db_type,
                             output_dir=output_dir,
@@ -689,6 +872,28 @@ with tab_batch:
             "AI model", available_models_for_ui(), os.getenv("DIAL_MODEL", "gpt-4o"),
             "batch_model", format_func=_model_label,
         )
+
+        per_table_col_overrides: dict = {}
+        if source_tables and mapping_valid:
+            st.markdown("**⑤ Column mapping — review per table before generating**")
+            batch_extractor = ExtractorFactory.create(
+                src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
+                database=database, username=rec["username"], password=source_password(rec),
+                auth=rec.get("auth", ""), s3_output=rec.get("s3_output", ""),
+            )
+            preview_pipeline = ValidationPipeline(model=model, source_extractor=batch_extractor)
+            for src_table in source_tables:
+                tgt_table = target_map.get(src_table, "")
+                if not tgt_table:
+                    continue
+                with st.expander(f"Column mapping — {src_table} → {tgt_table}", expanded=False):
+                    per_table_col_overrides[src_table] = render_mapping_review(
+                        preview_pipeline, schema, src_table, sf_schema, tgt_table,
+                        sf_database, database,
+                        (list(auto_excluded) + per_table_excl.get(src_table, [])),
+                        key_prefix=f"batch_{src_table}",
+                    )
+
         layer, output_dir = pick_layer("batch_layer")
 
         generate_disabled = not source_tables or not target_map or any(not t for t in target_map.values()) or (
@@ -707,13 +912,14 @@ with tab_batch:
                 progress.progress(i / len(pairs), text=f"{src_table} → {tgt_table}  ({i}/{len(pairs)})")
                 try:
                     pipeline = ValidationPipeline(model=model, source_extractor=extractor)
-                    result = pipeline.run(
+                    result, _plan = pipeline.run_with_plan(
                         pg_schema=schema,
                         pg_table=src_table,
                         sf_schema=sf_schema,
                         sf_table=tgt_table,
                         sf_database=sf_database,
                         pg_database=database,
+                        explicit_mappings=per_table_col_overrides.get(src_table) or None,
                         exclude_columns=(list(auto_excluded) + per_table_excl.get(src_table, [])) or None,
                         source_db_type=src_db_type,
                         output_dir=output_dir,
